@@ -95,7 +95,7 @@ sudo usermod -aG docker $USER   # puis se reconnecter
 
 ### 3. Lancer le honeypot
 ```bash
-git clone https://github.com/<ton-pseudo>/<ce-repo>.git honeypot
+git clone https://github.com/itsP4lv/cowrie-honeypot.git honeypot
 cd honeypot
 docker compose up -d --build
 ```
