@@ -1,206 +1,136 @@
-# 🍯 Honeypot Cowrie + panel web
+# 🍯 Mon honeypot Cowrie
 
-Un honeypot SSH/Telnet basé sur [Cowrie](https://github.com/cowrie/cowrie), installé sur un VPS, avec un **panel web maison** qui affiche les attaques en direct : connexions, identifiants essayés, commandes tapées, fichiers téléchargés par les attaquants.
+J'ai pris un petit VPS (Debian 13) et j'ai installé dessus **[Cowrie](https://github.com/cowrie/cowrie)**, un honeypot SSH/Telnet. Le but : laisser les bots d'Internet croire qu'ils ont trouvé un serveur Linux mal protégé, et regarder ce qu'ils font une fois « dedans ».
+
+Lire les logs JSON de Cowrie à la main, c'est vite pénible, alors j'ai codé un **panel web** pour voir les attaques en direct : d'où elles viennent, quels mots de passe sont essayés, quelles commandes sont tapées, quels fichiers sont téléchargés.
 
 ![Vue d'ensemble du panel](screenshots/overview.png)
 
-> Les IP et noms d'utilisateur des captures sont partiellement masqués.
+> Sur les captures, les IP sont masquées (`39.105.x.x`) et les connexions de mes propres tests sont anonymisées.
 
 ---
 
-## Sommaire
-- [Comment ça marche](#comment-ça-marche)
-- [Le panel web](#le-panel-web)
-- [Installation sur un VPS](#installation-sur-un-vps)
-- [Pare-feu (UFW)](#pare-feu-ufw)
-- [Accéder au panel](#accéder-au-panel)
-- [Tester le honeypot](#tester-le-honeypot)
-- [Sécurité](#sécurité)
-- [Structure du repo](#structure-du-repo)
-
----
-
-## Comment ça marche
+## Comment c'est monté
 
 ```
-             Internet (bots, scanners, attaquants)
-                            │
-             ┌──────────────┴──────────────┐
-             │ :22 / :23 (redirigés)       │ :2222 / :2223
-             ▼                             ▼
-   ┌──────────────────────────────────────────────┐
-   │ VPS  ─  UFW (pare-feu)                       │
-   │                                              │
-   │  ┌───────────────┐   volume    ┌──────────┐  │
-   │  │ cowrie        │──────────▶  │ panel    │  │
-   │  │ faux SSH/Tel. │ cowrie.json │ Flask    │  │
-   │  └───────────────┘  (lecture)  └────┬─────┘  │
-   │                                     │        │
-   │              127.0.0.1:8080 ◀───────┘        │
-   │  vrai SSH d'admin : autre port, par clé      │
-   └──────────────────────────────────────────────┘
-                            ▲
-                 tunnel SSH depuis mon PC
+          Internet (bots, scanners…)
+                     │
+          port 22 (SSH) / 23 (Telnet)
+                     ▼
+ ┌─────────────────────────────────────────────┐
+ │ VPS Debian  ·  UFW                          │
+ │                                             │
+ │  ┌──────────────┐  logs JSON  ┌──────────┐  │
+ │  │   Cowrie     │ ──────────▶ │  Panel   │  │
+ │  │ (faux shell) │  (lecture)  │  Flask   │  │
+ │  └──────────────┘             └────┬─────┘  │
+ │                     127.0.0.1:8080 │        │
+ │  mon vrai SSH : autre port, par clé│        │
+ └────────────────────────────────────┼────────┘
+                                      ▲
+                        tunnel SSH depuis mon PC
 ```
 
-1. **Cowrie** simule un serveur Linux. Il accepte les connexions SSH (port 2222) et Telnet (port 2223), laisse les attaquants « se connecter » et enregistre tout ce qu'ils font dans `cowrie.json`. Rien n'est réellement exécuté : le shell est une imitation.
-2. Le **panel** (Flask, un seul fichier Python) lit ces logs JSON en lecture seule via un volume Docker partagé et les expose sur `/api/stats`.
-3. La page web interroge l'API toutes les 5 secondes et met à jour les graphiques sans recharger.
+- **Cowrie** tourne dans un conteneur Docker et écoute sur les ports **22** et **23**, ceux que les bots scannent en permanence. Il simule un vrai système : faux shell, faux système de fichiers, et il accepte certains mots de passe pour que l'attaquant continue. Tout est enregistré, mais rien n'est réellement exécuté sur le VPS.
+- Mon **vrai SSH** a été déplacé sur un autre port, avec connexion par clé uniquement.
+- **UFW** bloque tout sauf mon port SSH et les ports 22/23 du honeypot.
+- Le **panel** lit les logs de Cowrie en lecture seule et n'écoute que sur `127.0.0.1` : pour le voir, j'ouvre un tunnel SSH depuis mon PC.
 
-## Le panel web
+## Le panel
 
 | Thème sombre | Thème clair |
 |---|---|
 | ![Thème sombre](screenshots/panel-dark.png) | ![Thème clair](screenshots/panel-light.png) |
 
-**Fonctionnalités**
-- **7 indicateurs** : connexions, IP uniques, pays d'origine, tentatives de login, logins réussis, commandes tapées, fichiers capturés (avec un badge `+N` quand de nouvelles attaques arrivent).
-- **Graphique des 24 dernières heures**, heure par heure, avec infobulle au survol.
-- **Taux de logins réussis** (donut acceptés / refusés).
-- **Carte des connexions** : un point par emplacement, taille proportionnelle au nombre de connexions, rouge si un login a réussi, pulsation si l'IP a été active dans les 15 dernières minutes. Survol = détail, clic = fiche de l'IP.
-- **Pays d'origine** avec drapeaux (nombre d'IP par pays, clic = filtre la liste des IP).
+Ce qu'il affiche, avec une actualisation toutes les 5 secondes :
+
+**Les chiffres clés** : connexions, IP uniques, pays, tentatives de login, logins réussis, commandes tapées, fichiers capturés. Un badge `+N` apparaît quand il y a du nouveau.
+
+**La carte des connexions** : un point par lieu, plus gros quand il y a plus de connexions, rouge quand un bot a réussi à se connecter. Le point pulse si l'IP a été active dans le dernier quart d'heure. À côté, le classement des pays avec leurs drapeaux.
 
 ![Carte des connexions et pays](screenshots/map.png)
 
-- **Liste de toutes les IP** : drapeau, pays, ville, réseau (ASN + opérateur), connexions, tentatives, logins réussis, commandes, dernière activité. Tri par colonne et recherche (IP, pays, ville, AS).
-
-![Liste des IP](screenshots/ip-list.png)
-
-- **Fiche détaillée d'une IP** (clic sur une IP n'importe où dans le panel) : géolocalisation, ASN/opérateur, première et dernière apparition, clients SSH, identifiants essayés, chaque session avec ses commandes, fichiers téléchargés (lien VirusTotal du SHA-256), liens vers AbuseIPDB, Shodan, VirusTotal, GreyNoise, Censys et ipinfo.
-
-![Fiche d'une IP](screenshots/ip-detail.png)
-
-- **Classements** : top IP (avec drapeau), top combinaisons identifiant/mot de passe, top identifiants, top mots de passe, commandes les plus tapées, clients SSH utilisés.
+**Les classements** : top IP, top combinaisons identifiant/mot de passe, identifiants et mots de passe les plus essayés, commandes les plus tapées, clients SSH utilisés par les bots.
 
 ![Classements](screenshots/rankings.png)
 
-- **Flux en direct** en 3 onglets (commandes, connexions, fichiers) avec filtre de recherche ; les nouvelles lignes clignotent à leur arrivée, un clic sur une IP ouvre sa fiche.
+**La liste des IP** : drapeau, ville, opérateur (numéro d'AS), nombre de connexions, de tentatives et de commandes, dernière activité. On peut trier et filtrer.
+
+![Liste des IP](screenshots/ip-list.png)
+
+**La fiche d'une IP** : un clic sur n'importe quelle IP du panel ouvre sa fiche. On y trouve la géolocalisation, l'opérateur, la première et la dernière apparition, les identifiants essayés, chaque session avec les commandes tapées, les fichiers téléchargés, et des liens vers AbuseIPDB, Shodan, VirusTotal, GreyNoise…
+
+![Fiche d'une IP](screenshots/ip-detail.png)
+
+**Le flux en direct** des commandes, des connexions et des fichiers, avec une recherche.
 
 ![Flux des commandes](screenshots/feed-commands.png)
 ![Flux des connexions](screenshots/feed-logins.png)
 
-- Thème sombre/clair, bouton pause, actualisation auto toutes les 5 s.
+### Côté technique
+- Un seul fichier Python (`panel/app.py`) : Flask pour l'API, et la page en HTML/CSS/JS sans framework. Les graphiques et la carte sont dessinés en SVG à la main.
+- La **géolocalisation est hors ligne**. Au build de l'image, `panel/fetch_assets.py` télécharge la base gratuite [DB-IP Lite](https://db-ip.com/db/lite.php), le fond de carte Natural Earth et les drapeaux [flag-icons](https://github.com/lipis/flag-icons). Aucune IP n'est envoyée à une API externe.
+- Deux routes d'API :
+  - `GET /api/stats` : toutes les données du tableau de bord ;
+  - `GET /api/ip/<ip>` : la fiche d'une IP.
 
-**API**
-- `GET /api/stats` : totaux, classements, activité par heure, pays, IP géolocalisées (1 500 plus récentes), 100 dernières commandes et connexions, 50 derniers fichiers.
-- `GET /api/ip/<ip>` : fiche complète d'une IP (géoloc, sessions, identifiants, commandes, fichiers).
+## Installer le même chez soi
 
-### Géolocalisation hors ligne
-Le panel ne contacte **aucune API externe** : au build de l'image, `panel/fetch_assets.py` télécharge
-- les bases **[DB-IP Lite](https://db-ip.com/db/lite.php)** City et ASN (CC BY 4.0, mises à jour chaque mois),
-- le contour des continents **Natural Earth** (via `world-atlas`, domaine public),
-- les drapeaux SVG **[flag-icons](https://github.com/lipis/flag-icons)** (MIT) : Windows n'affiche pas les emojis drapeaux.
+Ce qu'il faut : un VPS sous Debian ou Ubuntu, et Docker.
 
-Les IP des attaquants ne quittent donc jamais le VPS (les liens AbuseIPDB, Shodan… ne s'ouvrent que si tu cliques dessus). Pour mettre à jour la base de géolocalisation chaque mois :
+**1. Déplacer son vrai SSH** pour libérer le port 22, dans `/etc/ssh/sshd_config.d/00-perso.conf` :
+```
+Port <ton-port>
+PasswordAuthentication no
+PermitRootLogin prohibit-password
+```
+> ⚠️ Avec OpenSSH, **c'est la première valeur lue qui gagne**, et les fichiers de `sshd_config.d/` sont lus par ordre alphabétique. Si ton hébergeur a déjà mis un fichier comme `50-cloud-init.conf` avec `PasswordAuthentication yes`, un fichier nommé `perso.conf` sera ignoré. C'est pour ça qu'il faut l'appeler `00-perso.conf` ; vérifie ensuite avec `sshd -T | grep -i password`.
+
 ```bash
-docker compose build --build-arg GEO_MONTH=$(date +%Y-%m) panel && docker compose up -d panel
+ufw allow <ton-port>/tcp      # avant de redémarrer SSH, sinon tu t'enfermes dehors
+systemctl restart ssh         # puis teste une nouvelle connexion avant de fermer l'ancienne
 ```
-Si le téléchargement échoue, le panel démarre quand même, sans géolocalisation.
 
-## Installation sur un VPS
-
-Testé sur Debian/Ubuntu.
-
-### 1. Déplacer le vrai SSH
-Le port 22 doit être libéré pour le honeypot. Dans `/etc/ssh/sshd_config` :
-```
-Port 22222                 # exemple, choisis le tien
-PasswordAuthentication no  # connexion par clé uniquement
-PermitRootLogin no
-```
+**2. Le pare-feu**
 ```bash
-sudo ufw allow 22222/tcp   # AVANT de redémarrer SSH, sinon tu t'enfermes dehors
-sudo systemctl restart ssh
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp && ufw allow 23/tcp
+ufw enable
 ```
-Ouvre une **nouvelle** session sur le nouveau port avant de fermer l'ancienne.
+> Docker publie ses ports **sans passer par UFW**. C'est pour ça que le panel est lié à `127.0.0.1:8080` et non à `8080` : même avec UFW mal réglé, il reste inaccessible depuis Internet.
 
-### 2. Installer Docker
+**3. Lancer le honeypot**
 ```bash
 curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER   # puis se reconnecter
-```
-
-### 3. Lancer le honeypot
-```bash
 git clone https://github.com/itsP4lv/cowrie-honeypot.git honeypot
 cd honeypot
 docker compose up -d --build
 ```
-- Faux SSH : **2222**, faux Telnet : **2223**
-- Panel : **127.0.0.1:8080** (local au VPS uniquement)
 
-### 4. Rediriger 22 → 2222 et 23 → 2223 (optionnel mais conseillé)
-Les bots scannent surtout les ports 22 et 23. Dans `/etc/ufw/before.rules`, **avant** la section `*filter` :
-```
-*nat
-:PREROUTING ACCEPT [0:0]
--A PREROUTING -p tcp --dport 22 -j REDIRECT --to-port 2222
--A PREROUTING -p tcp --dport 23 -j REDIRECT --to-port 2223
-COMMIT
-```
-puis `sudo ufw reload`.
-
-## Pare-feu (UFW)
-
+**4. Ouvrir le panel depuis son PC**
 ```bash
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-sudo ufw allow 22222/tcp   # vrai SSH d'admin
-sudo ufw allow 22/tcp      # honeypot SSH (redirigé vers 2222)
-sudo ufw allow 23/tcp      # honeypot Telnet (redirigé vers 2223)
-sudo ufw enable
-sudo ufw status verbose
+ssh -N -p <ton-port> -L 8080:127.0.0.1:8080 root@IP_DU_VPS
 ```
+puis **http://localhost:8080** dans le navigateur. Le panel n'a pas de mot de passe : c'est le tunnel SSH qui protège l'accès.
 
-> ⚠️ **Docker contourne UFW.** Un port publié par Docker (`ports:`) est ouvert sur Internet même si UFW ne l'autorise pas, car Docker écrit ses propres règles iptables. C'est pour ça que le panel est publié sur `127.0.0.1:8080` et pas sur `8080` : il n'est jamais exposé, quel que soit l'état d'UFW.
-
-## Accéder au panel
-
-Le panel n'écoute que sur le VPS. Depuis ton PC, ouvre un tunnel SSH :
+**Commandes utiles**
 ```bash
-ssh -p 22222 -L 8080:127.0.0.1:8080 utilisateur@IP_DU_VPS
+docker compose logs -f cowrie                 # logs bruts de Cowrie
+docker compose restart panel                  # redémarrer le panel
+docker compose build --build-arg GEO_MONTH=$(date +%Y-%m) panel && docker compose up -d panel   # mettre à jour la géoloc (1×/mois)
 ```
-puis ouvre **http://localhost:8080** dans ton navigateur. Le panel n'a pas d'authentification : c'est le tunnel SSH qui la remplace.
 
-## Tester le honeypot
-
-```bash
-ssh root@IP_DU_VPS -p 2222
-```
-Par défaut Cowrie accepte `root` avec presque n'importe quel mot de passe (sauf `root` et `123456`). Tape `whoami`, `uname -a`, `cat /etc/passwd`, `wget http://example.com/test.sh`, puis regarde le panel.
-
-Commandes utiles :
-```bash
-docker compose logs -f cowrie     # logs bruts de Cowrie
-docker compose ps                 # état des conteneurs
-docker compose restart            # redémarrer
-docker compose down -v            # tout supprimer, logs capturés compris
-```
+> J'ai d'abord testé tout ça en local sur Windows avec Docker Desktop : les notes sont dans [LISEZMOI.md](LISEZMOI.md).
 
 ## Sécurité
 
-- **Le panel n'est jamais exposé à Internet** : lié à `127.0.0.1`, accès par tunnel SSH uniquement.
-- **Le vrai SSH** est sur un autre port, par clé uniquement, root désactivé.
-- **Cowrie tourne dans un conteneur**, sans privilèges, avec un faux système de fichiers : un attaquant « connecté » n'atteint pas le VPS.
-- **Le panel monte les logs en lecture seule** (`/data:ro`).
-- **Protection XSS** : tout ce qu'affiche le panel vient des attaquants (identifiants, commandes, URL). Ces données sont insérées avec `textContent`, jamais `innerHTML`, donc une commande du type `<script>…</script>` s'affiche comme du texte.
-- **Fichiers capturés** : les malwares téléchargés par les attaquants sont stockés dans le volume Cowrie (`var/lib/cowrie/downloads`). Ne les exécute jamais ; analyse-les seulement dans une VM isolée ou via leur SHA-256 sur VirusTotal.
-
-## Structure du repo
-
-```
-.
-├── docker-compose.yml   # cowrie + panel, volume partagé
-├── panel/
-│   ├── app.py           # API Flask + page web (HTML/CSS/JS intégrés, sans dépendance front)
-│   ├── fetch_assets.py  # télécharge géoloc, carte et drapeaux au build
-│   └── Dockerfile
-├── screenshots/         # captures du panel
-├── LISEZMOI.md          # version locale (Windows + Docker Desktop)
-└── README.md
-```
+- Le panel n'est jamais exposé à Internet : il écoute sur `127.0.0.1`, et on y accède par tunnel SSH.
+- Cowrie tourne dans un conteneur avec un faux système : un bot « connecté » n'a pas accès au vrai VPS.
+- Le panel lit les logs en lecture seule (`/data:ro`).
+- Tout ce que le panel affiche vient des attaquants (identifiants, commandes, URL). Ces textes sont insérés avec `textContent`, jamais `innerHTML`, donc un `<script>` tapé par un bot s'affiche comme du simple texte.
+- Les malwares récupérés par Cowrie restent dans le volume Docker. Je ne les exécute jamais ; je les vérifie seulement par leur SHA-256 sur VirusTotal.
 
 ## Crédits
-- [Cowrie](https://github.com/cowrie/cowrie) : le honeypot SSH/Telnet.
-- Panel : Flask + SVG fait main, sans bibliothèque de graphiques ni de cartographie.
+- [Cowrie](https://github.com/cowrie/cowrie) : le honeypot.
 - [IP Geolocation by DB-IP](https://db-ip.com) (CC BY 4.0), [Natural Earth](https://www.naturalearthdata.com/), [flag-icons](https://github.com/lipis/flag-icons).

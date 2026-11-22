@@ -4,11 +4,11 @@ services:
     container_name: cowrie
     restart: unless-stopped
     ports:
-      # Faux SSH (2222) et faux Telnet (2223).
-      # Accessible depuis ton réseau local (ex : une VM Kali), pas depuis Internet
-      # tant que tu ne fais pas de redirection de port sur ta box.
-      - "2222:2222"
-      - "2223:2223"
+      # Cowrie écoute sur 2222/2223 dans le conteneur ; on l'expose sur les vrais
+      # ports 22 (SSH) et 23 (Telnet), ceux que les bots scannent.
+      # Le vrai SSH du VPS doit donc être déplacé sur un autre port (voir README).
+      - "22:2222"
+      - "23:2223"
     environment:
       COWRIE_TELNET_ENABLED: "yes"
       COWRIE_OUTPUT_JSONLOG_ENABLED: "true"
@@ -22,7 +22,7 @@ services:
     depends_on:
       - cowrie
     ports:
-      # Le panel n'écoute QUE sur ton PC (127.0.0.1) : personne d'autre ne peut l'ouvrir.
+      # Le panel n'écoute que sur 127.0.0.1 (Docker contourne UFW) : accès par tunnel SSH.
       - "127.0.0.1:8080:8080"
     volumes:
       - cowrie-var:/data:ro
