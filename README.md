@@ -62,6 +62,8 @@ Ce qu'il affiche, avec une actualisation toutes les 5 secondes :
 
 ![Fiche d'une IP](screenshots/ip-detail.png)
 
+**Bannir une IP** : dans la fiche d'une IP, le bouton « Bannir l'IP » la bloque au pare-feu du VPS (honeypot **et** vrai SSH). Les IP bannies sont listées dans une section dédiée, avec leur statut (bloquée, en attente, refusée) et un bouton pour les débannir.
+
 **Le flux en direct** des commandes, des connexions et des fichiers, avec une recherche.
 
 ![Flux des commandes](screenshots/feed-commands.png)
@@ -70,9 +72,17 @@ Ce qu'il affiche, avec une actualisation toutes les 5 secondes :
 ### Côté technique
 - Un seul fichier Python (`panel/app.py`) : Flask pour l'API, et la page en HTML/CSS/JS sans framework. Les graphiques et la carte sont dessinés en SVG à la main.
 - La **géolocalisation est hors ligne**. Au build de l'image, `panel/fetch_assets.py` télécharge la base gratuite [DB-IP Lite](https://db-ip.com/db/lite.php), le fond de carte Natural Earth et les drapeaux [flag-icons](https://github.com/lipis/flag-icons). Aucune IP n'est envoyée à une API externe.
-- Deux routes d'API :
+- Routes d'API :
   - `GET /api/stats` : toutes les données du tableau de bord ;
-  - `GET /api/ip/<ip>` : la fiche d'une IP.
+  - `GET /api/ip/<ip>` : la fiche d'une IP ;
+  - `POST /api/bans` et `DELETE /api/bans/<ip>` : bannir ou débannir une IP.
+
+### Comment marche le ban
+Le panel tourne dans Docker sans aucun droit sur le réseau du VPS, et je voulais que ça reste comme ça. Le bouton écrit donc seulement l'IP dans `bans/banlist.json`. C'est un petit service systemd sur l'hôte (`host/honeypot-bans.py`) qui surveille ce fichier et applique la liste au pare-feu.
+
+- **Pourquoi nftables et pas `ufw deny`** : Docker publie les ports 22/23 du honeypot sans passer par UFW, donc un ban UFW ne bloquerait pas l'attaquant. Le service utilise une table nftables dédiée (`inet honeypot_ban`) accrochée en *prerouting* avec la priorité la plus haute : le paquet est jeté avant Docker et avant UFW.
+- **Garde-fous** : le service refuse de bannir une IP privée, une IP de `bans/allowlist.txt`, ou l'IP d'une session SSH d'admin ouverte à ce moment-là, pour ne jamais s'enfermer dehors.
+- **Protection CSRF** : le panel n'a pas de mot de passe (c'est le tunnel SSH qui protège l'accès). Pour qu'un site web malveillant ne puisse pas bannir des IP via le tunnel, les requêtes de ban exigent un Host local, un Origin identique, et un en-tête `X-Panel` envoyé en JSON.
 
 ## Installer le même chez soi
 
@@ -108,7 +118,13 @@ cd honeypot
 docker compose up -d --build
 ```
 
-**4. Ouvrir le panel depuis son PC**
+**4. Installer le service de ban** (optionnel, nécessaire pour le bouton « Bannir »)
+```bash
+sh host/install.sh
+```
+Ajoute ton IP perso dans `bans/allowlist.txt` si elle est fixe.
+
+**5. Ouvrir le panel depuis son PC**
 ```bash
 ssh -N -p <ton-port> -L 8080:127.0.0.1:8080 root@IP_DU_VPS
 ```

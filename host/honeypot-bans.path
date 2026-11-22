@@ -1,0 +1,11 @@
+[Unit]
+Description=Honeypot : surveille la liste des IP bannies écrite par le panel
+
+[Path]
+# le panel remplace le fichier de façon atomique (rename) : on surveille le dossier
+PathChanged=/root/honeypot/bans/banlist.json
+PathModified=/root/honeypot/bans
+Unit=honeypot-bans.service
+
+[Install]
+WantedBy=multi-user.target

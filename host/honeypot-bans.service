@@ -1,0 +1,11 @@
+[Unit]
+Description=Honeypot : applique les IP bannies depuis le panel au pare-feu (nftables)
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/sbin/honeypot-bans.py
+
+[Install]
+# relancé au démarrage : la table nftables ne survit pas à un reboot
+WantedBy=multi-user.target

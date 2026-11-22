@@ -26,6 +26,8 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - cowrie-var:/data:ro
+      # liste des IP bannies : écrite par le panel, appliquée par host/honeypot-bans.py
+      - ./bans:/bans
 
 volumes:
   cowrie-var:

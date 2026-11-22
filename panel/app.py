@@ -13,7 +13,11 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
-from flask import Flask, Response, abort, jsonify, send_from_directory
+import threading
+import time
+from urllib.parse import urlsplit
+
+from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
 try:
     import maxminddb
@@ -26,6 +30,12 @@ DOWNLOADS = os.path.join(DATA, "lib", "cowrie", "downloads")
 # Données téléchargées au build par fetch_assets.py (géoloc DB-IP, carte, drapeaux).
 ASSETS = os.environ.get("PANEL_ASSETS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets"))
 MAX_IPS = 1500  # IP les plus récentes envoyées au navigateur (tableau + carte)
+# Bans : le panel écrit la liste, un service systemd sur l'hôte l'applique au pare-feu
+# (le conteneur n'a aucun droit sur le réseau de l'hôte). Voir host/.
+BANS_DIR = os.environ.get("PANEL_BANS", "/bans")
+BANLIST = os.path.join(BANS_DIR, "banlist.json")
+APPLIED = os.path.join(BANS_DIR, "applied.json")
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 LOGIN_IDS = ("cowrie.login.failed", "cowrie.login.success")
 FILE_IDS = ("cowrie.session.file_download", "cowrie.session.file_upload")
@@ -210,6 +220,7 @@ def stats():
         "top_countries": top_countries,
         "ips": recent_ips,
         "ips_total": len(per_ip),
+        "bans": bans_view(),
         "top_users": top(users),
         "top_passwords": top(passwords),
         "top_combos": top(combos),
@@ -289,6 +300,111 @@ def ip_detail(ip):
         "files": files[-50:][::-1],
     })
     return jsonify(detail)
+
+
+# ---------- Bans ----------
+_ban_lock = threading.Lock()
+
+
+def _read_json(path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def _write_banlist(bans):
+    os.makedirs(BANS_DIR, exist_ok=True)
+    tmp = BANLIST + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(bans, f, indent=1, sort_keys=True)
+    os.replace(tmp, BANLIST)  # écriture atomique : le service ne lit jamais un fichier à moitié écrit
+
+
+def bans_view():
+    """Liste des bans + état d'application renvoyé par le service de l'hôte."""
+    bans = _read_json(BANLIST, {})
+    applied = _read_json(APPLIED, {})
+    done, skipped = set(applied.get("applied", [])), applied.get("skipped", {})
+    try:
+        list_mtime = os.path.getmtime(BANLIST)
+    except OSError:
+        list_mtime = 0
+    helper_ts = applied.get("ts", 0)
+    rows = []
+    for ip, info in bans.items():
+        g = geo(ip)
+        if ip in skipped:
+            status, detail = "refuse", str(skipped[ip])
+        elif ip in done:
+            status, detail = "actif", ""
+        else:
+            status, detail = "attente", ""
+        rows.append({"ip": ip, "ts": info.get("ts", ""), "reason": info.get("reason", ""),
+                     "cc": g["cc"], "country": g["country"], "status": status, "detail": detail})
+    rows.sort(key=lambda r: r["ts"], reverse=True)
+    return {
+        "list": rows,
+        "helper_ts": helper_ts,
+        "helper_error": applied.get("error", ""),
+        # service absent ou bloqué : la liste a changé il y a plus de 30 s sans être appliquée
+        "helper_late": bool(bans) and list_mtime - helper_ts > 30 and time.time() - list_mtime > 30,
+    }
+
+
+def _check_csrf():
+    """Le panel n'a pas de mot de passe (il est derrière un tunnel SSH). On empêche donc
+    un site web ouvert dans le navigateur de déclencher un ban via le tunnel :
+    - Host local uniquement (bloque le DNS rebinding) ;
+    - Origin, s'il est présent, identique à Host ;
+    - en-tête personnalisé + JSON : impossible à envoyer depuis un autre site sans
+      requête CORS préalable, que le panel ne valide jamais."""
+    host = request.host or ""
+    if urlsplit("//" + host).hostname not in LOCAL_HOSTS:
+        abort(403)
+    origin = request.headers.get("Origin")
+    if origin and urlsplit(origin).netloc != host:
+        abort(403)
+    if request.headers.get("X-Panel") != "1" or not request.is_json:
+        abort(403)
+
+
+def _valid_public_ip(raw):
+    try:
+        addr = ipaddress.ip_address(str(raw))
+    except ValueError:
+        abort(400, "IP invalide")
+    if not addr.is_global:
+        abort(400, "IP privée ou réservée : pas de ban")
+    return str(addr)
+
+
+@app.post("/api/bans")
+def ban_ip():
+    _check_csrf()
+    body = request.get_json(silent=True) or {}
+    ip = _valid_public_ip(body.get("ip"))
+    reason = str(body.get("reason", ""))[:200]
+    with _ban_lock:
+        bans = _read_json(BANLIST, {})
+        bans[ip] = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "reason": reason}
+        _write_banlist(bans)
+    return jsonify(bans_view())
+
+
+@app.delete("/api/bans/<path:ip>")
+def unban_ip(ip):
+    _check_csrf()
+    try:
+        ip = str(ipaddress.ip_address(ip))
+    except ValueError:
+        abort(400)
+    with _ban_lock:
+        bans = _read_json(BANLIST, {})
+        if bans.pop(ip, None) is not None:
+            _write_banlist(bans)
+    return jsonify(bans_view())
 
 
 @app.get("/flags/<cc>.svg")
@@ -531,6 +647,16 @@ td.mono{font-family:var(--mono)}
 .sess-b .c{word-break:break-all}
 .sess-b .l{color:var(--mut)}
 .sess-b .l.ok{color:var(--ok)}
+.btn.danger{color:var(--ko);border-color:color-mix(in srgb,var(--ko) 40%,transparent);background:color-mix(in srgb,var(--ko) 10%,transparent)}
+.btn.danger:hover{background:color-mix(in srgb,var(--ko) 18%,transparent);border-color:var(--ko)}
+.btn:disabled{opacity:.5;cursor:wait}
+.pill.ban{color:var(--ko);background:rgba(255,90,106,.12)}
+.pill.wait{color:var(--acc);background:rgba(245,165,36,.12)}
+.pill.off{color:var(--mut);background:var(--line)}
+.banbox{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border-radius:12px;border:1px solid color-mix(in srgb,var(--ko) 35%,transparent);background:color-mix(in srgb,var(--ko) 7%,transparent);font-size:12.5px}
+.banbox.wait{border-color:color-mix(in srgb,var(--acc) 35%,transparent);background:color-mix(in srgb,var(--acc) 7%,transparent)}
+.warn{margin:0 0 12px;padding:10px 12px;border-radius:12px;font-size:12.5px;color:var(--acc);background:rgba(245,165,36,.1);border:1px solid rgba(245,165,36,.3)}
+td .pill.ban{margin-left:8px}
 .foot{max-width:1480px;margin:0 auto;padding:0 28px 32px;color:var(--dim);font-size:11.5px}
 .foot a{color:var(--mut)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -591,6 +717,12 @@ td.mono{font-family:var(--mono)}
  </section>
 
  <section class="card">
+  <div class="card-h"><h2>IP bannies<small id="ban-sub">bloquées au pare-feu du VPS (honeypot et vrai SSH)</small></h2></div>
+  <div id="ban-warn"></div>
+  <div class="tw"><table id="bantable"></table></div>
+ </section>
+
+ <section class="card">
   <div class="card-h">
    <div class="tabs" id="tabs"></div>
    <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -628,6 +760,7 @@ const ICONS={ /* icônes fixes (pas de données attaquant) */
  copy:'<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
  filter:'<path d="M22 3H2l8 9.5V19l4 2v-8.5z"/>',
  ext:'<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+ ban:'<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
 };
 function icon(name){const s=document.createElementNS(NS,"svg");s.setAttribute("viewBox","0 0 24 24");s.setAttribute("fill","none");s.setAttribute("stroke","currentColor");
  s.setAttribute("stroke-width","2");s.setAttribute("stroke-linecap","round");s.setAttribute("stroke-linejoin","round");s.innerHTML=ICONS[name];return s}
@@ -815,11 +948,45 @@ function renderIps(){if(!last)return;const q=$("#ipfilter").value.trim().toLower
   const org=el("td","org",r.asn?"AS"+r.asn+(r.org?" · "+r.org:""):(r.org||"—"));org.title=org.textContent;
   const num=(v,ok)=>{const td=el("td","num"+(v?"":" zero"));if(ok&&v)td.append(el("span","pill ko",nf.format(v)));else td.textContent=nf.format(v);return td};
   const lt=el("td","t",ago(r.last));lt.title=fmtTime(r.last);
-  tr.append(loc,el("td","mono",r.ip),org,num(r.connexions),num(r.tentatives),num(r.reussies,true),num(r.commandes),lt);tb.append(tr)});
+  const ipc=el("td","mono",r.ip);if(banOf(r.ip))ipc.append(el("span","pill ban","Bannie"));
+  tr.append(loc,ipc,org,num(r.connexions),num(r.tentatives),num(r.reussies,true),num(r.commandes),lt);tb.append(tr)});
  $("#iptable").replaceChildren(thead,tb);
  const tot=last.ips_total||all.length;
  $("#ip-sub").textContent=(q?nf.format(rows.length)+" sur ":"")+nf.format(tot)+" IP"+(rows.length>IP_ROWS?" · "+IP_ROWS+" affichées":"")+" · cliquer sur une ligne pour voir la fiche"}
 $("#ipfilter").addEventListener("input",renderIps);
+
+/* ---------- Bans ---------- */
+const BAN_STATUS={actif:["pill ban","Bloquée"],attente:["pill wait","En attente"],refuse:["pill off","Refusée"]};
+const banOf=ip=>last&&last.bans?last.bans.list.find(b=>b.ip===ip):null;
+async function banApi(method,path,body){
+ const r=await fetch(path,{method,headers:{"Content-Type":"application/json","X-Panel":"1"},body:JSON.stringify(body||{})});
+ if(!r.ok){let m="erreur "+r.status;try{const t=await r.text();const x=/<p>(.*?)<\/p>/.exec(t);if(x)m=x[1]}catch(e){}throw new Error(m)}
+ return r.json()}
+async function setBan(ip,on,btnEl){
+ if(on&&!confirm("Bannir "+ip+" ?\n\nL'IP sera bloquée au pare-feu du VPS : elle ne pourra plus joindre le honeypot ni le vrai SSH."))return;
+ if(btnEl)btnEl.disabled=true;
+ try{const bans=await banApi(on?"POST":"DELETE",on?"/api/bans":"/api/bans/"+encodeURIComponent(ip),on?{ip,reason:"ban manuel depuis le panel"}:null);
+  if(last)last.bans=bans;toast(on?"IP bannie : "+ip:"IP débannie : "+ip);renderBans();renderIps();if(curIp===ip)loadIp()}
+ catch(e){toast("Impossible : "+e.message)}finally{if(btnEl)btnEl.disabled=false}}
+function banButton(ip,isPrivate){if(isPrivate)return el("span");const b=banOf(ip);
+ const x=el("button",b?"btn":"btn danger");x.type="button";x.append(icon("ban"),b?"Débannir":"Bannir l'IP");x.onclick=()=>setBan(ip,!b,x);return x}
+function banBox(ip){const b=banOf(ip);if(!b)return null;const [cls,lbl]=BAN_STATUS[b.status]||BAN_STATUS.attente;
+ const box=el("div","banbox"+(b.status==="actif"?"":" wait"));box.append(el("span",cls,lbl));
+ box.append(el("span","",b.status==="actif"?"Bannie le "+fmtTime(b.ts)+", bloquée au pare-feu.":b.status==="refuse"?"Le pare-feu a refusé ce ban : "+b.detail:"Bannie le "+fmtTime(b.ts)+", en attente d'application par le service du VPS."));
+ return box}
+function renderBans(){if(!last)return;const B=last.bans||{list:[]},rows=B.list,t=$("#bantable"),w=$("#ban-warn");
+ w.replaceChildren();
+ if(B.helper_error)w.append(el("p","warn","Erreur du service de ban : "+B.helper_error));
+ else if(B.helper_late)w.append(el("p","warn","Le service de ban du VPS ne semble pas tourner : les IP sont dans la liste mais pas encore bloquées (voir host/ dans le README)."));
+ $("#ban-sub").textContent=rows.length?nf.format(rows.filter(r=>r.status==="actif").length)+" bloquée"+(rows.length>1?"s":"")+" sur "+nf.format(rows.length)+" · au pare-feu du VPS (honeypot et vrai SSH)":"bloquées au pare-feu du VPS (honeypot et vrai SSH)";
+ const thead=el("thead"),hr=el("tr");["IP","Pays","Bannie le","Statut",""].forEach(h=>hr.append(el("th","",h)));thead.append(hr);
+ const tb=el("tbody");
+ if(!rows.length){const tr=el("tr"),td=el("td");td.colSpan=5;td.append(emptyBox("Aucune IP bannie. Ouvre la fiche d'une IP et clique sur « Bannir l'IP »."));tr.append(td);tb.append(tr)}
+ rows.forEach(b=>{const tr=el("tr"),ipc=el("td","ip");ipc.append(ipTag(b.ip,b.cc));ipc.onclick=()=>openIp(b.ip);
+  const [cls,lbl]=BAN_STATUS[b.status]||BAN_STATUS.attente,st=el("td");st.append(el("span",cls,lbl));if(b.detail)st.title=b.detail;
+  const ac=el("td");ac.style.textAlign="right";const x=el("button","btn");x.type="button";x.append(icon("x"),"Débannir");x.onclick=()=>setBan(b.ip,false,x);ac.append(x);
+  tr.append(ipc,el("td","",b.country||(b.cc?regionName(b.cc):"—")),el("td","t",fmtTime(b.ts)),st,ac);tb.append(tr)});
+ t.replaceChildren(thead,tb)}
 
 /* ---------- Fiche d'une IP ---------- */
 let curIp=null;
@@ -851,7 +1018,8 @@ function renderIp(d){const box=$("#drawer"),st=box.scrollTop,w=el("div","dw");
  row("Coordonnées",d.lat!=null?d.lat.toFixed(3)+", "+d.lon.toFixed(3)+" (approx.)":"");
  row("Première vue",fmtTime(d.first)+" · "+ago(d.first));row("Dernière vue",fmtTime(d.last)+" · "+ago(d.last));
  row("Clients SSH",(d.clients||[]).map(c=>c.label).join(", "));row("Type",d.private?"Adresse privée / locale":"Adresse publique");
- w.append(h,act,mini,sec("Informations",info));
+ act.append(banButton(d.ip,d.private));
+ w.append(h,act);const bb=banBox(d.ip);if(bb)w.append(bb);w.append(mini,sec("Informations",info));
  /* identifiants */
  if(d.credentials&&d.credentials.length){const tw=el("div","tw"),tb=el("table"),th=el("thead"),tr=el("tr");["Utilisateur","Mot de passe","Essais",""].forEach(x=>tr.append(el("th","",x)));th.append(tr);
   const body=el("tbody");d.credentials.forEach(c=>{const r=el("tr"),p=el("td");p.append(el("span",c.ok?"pill ok":"pill ko",c.ok?"Réussi":"Échec"));
@@ -911,7 +1079,7 @@ async function refresh(){
   const prev=last;last=d;
   updateKpis(d.totals);drawChart(d.per_hour);updateDonut(d.totals.reussies,d.totals.tentatives);
   RANKS.forEach(([k,,,ip])=>updateRank(k,d[k]||[],ip));
-  updateCountries(d.top_countries||[]);updateMap(d.ips||[]);renderIps();if(curIp&&prev)loadIp();
+  updateCountries(d.top_countries||[]);updateMap(d.ips||[]);renderIps();renderBans();if(curIp&&prev)loadIp();
   Object.keys(FEEDS).forEach(k=>{tabCount[k].textContent=d[k].length});
   renderFeed(!!prev);
   if(!paused)setStatus("","En direct · "+new Date().toLocaleTimeString("fr-FR"));
