@@ -1,0 +1,31 @@
+services:
+  cowrie:
+    image: cowrie/cowrie:latest
+    container_name: cowrie
+    restart: unless-stopped
+    ports:
+      # Faux SSH (2222) et faux Telnet (2223).
+      # Accessible depuis ton réseau local (ex : une VM Kali), pas depuis Internet
+      # tant que tu ne fais pas de redirection de port sur ta box.
+      - "2222:2222"
+      - "2223:2223"
+    environment:
+      COWRIE_TELNET_ENABLED: "yes"
+      COWRIE_OUTPUT_JSONLOG_ENABLED: "true"
+    volumes:
+      - cowrie-var:/cowrie/cowrie-git/var
+
+  panel:
+    build: ./panel
+    container_name: cowrie-panel
+    restart: unless-stopped
+    depends_on:
+      - cowrie
+    ports:
+      # Le panel n'écoute QUE sur ton PC (127.0.0.1) : personne d'autre ne peut l'ouvrir.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - cowrie-var:/data:ro
+
+volumes:
+  cowrie-var:
