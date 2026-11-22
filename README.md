@@ -54,21 +54,39 @@ Un honeypot SSH/Telnet basé sur [Cowrie](https://github.com/cowrie/cowrie), ins
 | ![Thème sombre](screenshots/panel-dark.png) | ![Thème clair](screenshots/panel-light.png) |
 
 **Fonctionnalités**
-- **6 indicateurs** : connexions, IP uniques, tentatives de login, logins réussis, commandes tapées, fichiers capturés (avec un badge `+N` quand de nouvelles attaques arrivent).
+- **7 indicateurs** : connexions, IP uniques, pays d'origine, tentatives de login, logins réussis, commandes tapées, fichiers capturés (avec un badge `+N` quand de nouvelles attaques arrivent).
 - **Graphique des 24 dernières heures**, heure par heure, avec infobulle au survol.
 - **Taux de logins réussis** (donut acceptés / refusés).
-- **Classements** : top IP, top combinaisons identifiant/mot de passe, top identifiants, top mots de passe, commandes les plus tapées, clients SSH utilisés.
+- **Carte des connexions** : un point par emplacement, taille proportionnelle au nombre de connexions, rouge si un login a réussi, pulsation si l'IP a été active dans les 15 dernières minutes. Survol = détail, clic = fiche de l'IP.
+- **Pays d'origine** avec drapeaux (nombre d'IP par pays, clic = filtre la liste des IP).
+- **Liste de toutes les IP** : drapeau, pays, ville, réseau (ASN + opérateur), connexions, tentatives, logins réussis, commandes, dernière activité. Tri par colonne et recherche (IP, pays, ville, AS).
+- **Fiche détaillée d'une IP** (clic sur une IP n'importe où dans le panel) : géolocalisation, ASN/opérateur, première et dernière apparition, clients SSH, identifiants essayés, chaque session avec ses commandes, fichiers téléchargés (lien VirusTotal du SHA-256), liens vers AbuseIPDB, Shodan, VirusTotal, GreyNoise, Censys et ipinfo.
+- **Classements** : top IP (avec drapeau), top combinaisons identifiant/mot de passe, top identifiants, top mots de passe, commandes les plus tapées, clients SSH utilisés.
 
 ![Classements](screenshots/rankings.png)
 
-- **Flux en direct** en 3 onglets (commandes, connexions, fichiers) avec filtre de recherche ; les nouvelles lignes clignotent à leur arrivée, un clic sur une IP la copie.
+- **Flux en direct** en 3 onglets (commandes, connexions, fichiers) avec filtre de recherche ; les nouvelles lignes clignotent à leur arrivée, un clic sur une IP ouvre sa fiche.
 
 ![Flux des commandes](screenshots/feed-commands.png)
 ![Flux des connexions](screenshots/feed-logins.png)
 
 - Thème sombre/clair, bouton pause, actualisation auto toutes les 5 s.
 
-**API** : `GET /api/stats` renvoie tout en JSON (totaux, classements, activité par heure, 100 dernières commandes et connexions, 50 derniers fichiers).
+**API**
+- `GET /api/stats` : totaux, classements, activité par heure, pays, IP géolocalisées (1 500 plus récentes), 100 dernières commandes et connexions, 50 derniers fichiers.
+- `GET /api/ip/<ip>` : fiche complète d'une IP (géoloc, sessions, identifiants, commandes, fichiers).
+
+### Géolocalisation hors ligne
+Le panel ne contacte **aucune API externe** : au build de l'image, `panel/fetch_assets.py` télécharge
+- les bases **[DB-IP Lite](https://db-ip.com/db/lite.php)** City et ASN (CC BY 4.0, mises à jour chaque mois),
+- le contour des continents **Natural Earth** (via `world-atlas`, domaine public),
+- les drapeaux SVG **[flag-icons](https://github.com/lipis/flag-icons)** (MIT) : Windows n'affiche pas les emojis drapeaux.
+
+Les IP des attaquants ne quittent donc jamais le VPS (les liens AbuseIPDB, Shodan… ne s'ouvrent que si tu cliques dessus). Pour mettre à jour la base de géolocalisation chaque mois :
+```bash
+docker compose build --build-arg GEO_MONTH=$(date +%Y-%m) panel && docker compose up -d panel
+```
+Si le téléchargement échoue, le panel démarre quand même, sans géolocalisation.
 
 ## Installation sur un VPS
 
@@ -166,6 +184,7 @@ docker compose down -v            # tout supprimer, logs capturés compris
 ├── docker-compose.yml   # cowrie + panel, volume partagé
 ├── panel/
 │   ├── app.py           # API Flask + page web (HTML/CSS/JS intégrés, sans dépendance front)
+│   ├── fetch_assets.py  # télécharge géoloc, carte et drapeaux au build
 │   └── Dockerfile
 ├── screenshots/         # captures du panel
 ├── LISEZMOI.md          # version locale (Windows + Docker Desktop)
@@ -174,4 +193,5 @@ docker compose down -v            # tout supprimer, logs capturés compris
 
 ## Crédits
 - [Cowrie](https://github.com/cowrie/cowrie) : le honeypot SSH/Telnet.
-- Panel : Flask + SVG fait main, sans bibliothèque de graphiques.
+- Panel : Flask + SVG fait main, sans bibliothèque de graphiques ni de cartographie.
+- [IP Geolocation by DB-IP](https://db-ip.com) (CC BY 4.0), [Natural Earth](https://www.naturalearthdata.com/), [flag-icons](https://github.com/lipis/flag-icons).
