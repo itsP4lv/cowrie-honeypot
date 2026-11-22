@@ -59,8 +59,17 @@ Un honeypot SSH/Telnet basé sur [Cowrie](https://github.com/cowrie/cowrie), ins
 - **Taux de logins réussis** (donut acceptés / refusés).
 - **Carte des connexions** : un point par emplacement, taille proportionnelle au nombre de connexions, rouge si un login a réussi, pulsation si l'IP a été active dans les 15 dernières minutes. Survol = détail, clic = fiche de l'IP.
 - **Pays d'origine** avec drapeaux (nombre d'IP par pays, clic = filtre la liste des IP).
+
+![Carte des connexions et pays](screenshots/map.png)
+
 - **Liste de toutes les IP** : drapeau, pays, ville, réseau (ASN + opérateur), connexions, tentatives, logins réussis, commandes, dernière activité. Tri par colonne et recherche (IP, pays, ville, AS).
+
+![Liste des IP](screenshots/ip-list.png)
+
 - **Fiche détaillée d'une IP** (clic sur une IP n'importe où dans le panel) : géolocalisation, ASN/opérateur, première et dernière apparition, clients SSH, identifiants essayés, chaque session avec ses commandes, fichiers téléchargés (lien VirusTotal du SHA-256), liens vers AbuseIPDB, Shodan, VirusTotal, GreyNoise, Censys et ipinfo.
+
+![Fiche d'une IP](screenshots/ip-detail.png)
+
 - **Classements** : top IP (avec drapeau), top combinaisons identifiant/mot de passe, top identifiants, top mots de passe, commandes les plus tapées, clients SSH utilisés.
 
 ![Classements](screenshots/rankings.png)
