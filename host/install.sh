@@ -5,6 +5,7 @@ set -eu
 cd "$(dirname "$0")/.."
 mkdir -p bans
 [ -f bans/allowlist.txt ] || printf '# Une IP par ligne : ces IP ne seront jamais bannies (ex : ton IP perso)\n' > bans/allowlist.txt
+chown -R 10001 bans  # le panel tourne sous l utilisateur 10001 (non-root) et doit pouvoir écrire la liste
 install -m 755 host/honeypot-bans.py /usr/local/sbin/honeypot-bans.py
 install -m 644 host/honeypot-bans.service host/honeypot-bans.path /etc/systemd/system/
 systemctl daemon-reload

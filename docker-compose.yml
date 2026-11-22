@@ -21,6 +21,19 @@ services:
     restart: unless-stopped
     depends_on:
       - cowrie
+    # Secrets optionnels (alertes Discord/Telegram, clé VirusTotal) : copier .env.example en .env
+    env_file:
+      - path: .env
+        required: false
+    # Durcissement : système de fichiers en lecture seule, aucune capacité Linux, pas d'élévation
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 128
     ports:
       # Le panel n'écoute que sur 127.0.0.1 (Docker contourne UFW) : accès par tunnel SSH.
       - "127.0.0.1:8080:8080"
@@ -28,6 +41,9 @@ services:
       - cowrie-var:/data:ro
       # liste des IP bannies : écrite par le panel, appliquée par host/honeypot-bans.py
       - ./bans:/bans
+      # base SQLite du panel (reconstruite automatiquement depuis les logs si supprimée)
+      - panel-state:/state
 
 volumes:
   cowrie-var:
+  panel-state:

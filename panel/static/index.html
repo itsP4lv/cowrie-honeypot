@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Honeypot · Cowrie</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
+<link rel="stylesheet" href="/static/app.css"></head><body>
+
+<header class="top">
+ <div class="brand">
+  <div class="logo">🍯</div>
+  <div><h1>Honeypot Cowrie</h1><p>Faux SSH :2222 · Faux Telnet :2223</p></div>
+ </div>
+ <div class="actions">
+  <span class="status" id="status"><i></i><span id="live">connexion…</span></span>
+  <button class="btn" id="pause" title="Mettre en pause l'actualisation"></button>
+  <button class="btn icon" id="theme" title="Changer de thème"></button>
+ </div>
+</header>
+
+<main>
+ <section class="kpis" id="kpis"></section>
+
+ <section class="row">
+  <div class="card">
+   <div class="card-h">
+    <h2>Activité des 24 dernières heures<small id="hours-total">&nbsp;</small></h2>
+    <div class="legend"><span style="--c:var(--acc)"><i></i>Connexions</span><span style="--c:var(--vio)"><i></i>Tentatives de login</span></div>
+   </div>
+   <div class="chart" id="chart"></div>
+  </div>
+  <div class="card">
+   <div class="card-h"><h2>Logins réussis<small>part des tentatives acceptées</small></h2></div>
+   <div class="donut" id="donut"></div>
+  </div>
+ </section>
+
+ <section class="row">
+  <div class="card">
+   <div class="card-h">
+    <h2>Carte des connexions<small id="map-sub">&nbsp;</small></h2>
+    <div class="legend"><span style="--c:var(--acc)"><i></i>Attaquant</span><span style="--c:var(--ko)"><i></i>Login réussi</span></div>
+   </div>
+   <div class="map" id="map"></div>
+  </div>
+  <div class="card">
+   <div class="card-h"><h2>Pays d'origine<small>nombre d'IP par pays</small></h2></div>
+   <div class="rank" id="countries"></div>
+  </div>
+ </section>
+
+ <section class="row">
+  <div class="card">
+   <div class="card-h"><h2>Heures d'activité<small>connexions par heure sur les 7 derniers jours (heure locale)</small></h2></div>
+   <div class="heat" id="heat"></div>
+  </div>
+  <div class="card">
+   <div class="card-h"><h2>Comportements<small>classement automatique des commandes · nombre d'IP</small></h2></div>
+   <div class="rank" id="behaviours"></div>
+  </div>
+ </section>
+
+ <section class="grid" id="ranks"></section>
+
+ <section class="card">
+  <div class="card-h">
+   <h2>Adresses IP<small id="ip-sub">cliquer sur une IP pour voir sa fiche</small></h2>
+   <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input type="search" id="ipfilter" placeholder="Filtrer (IP, pays, ville, AS…)" autocomplete="off"></label>
+  </div>
+  <div class="tw"><table id="iptable"></table></div>
+ </section>
+
+ <section class="card">
+  <div class="card-h"><h2>IP bannies<small id="ban-sub">bloquées au pare-feu du VPS (honeypot et vrai SSH)</small></h2></div>
+  <div id="ban-warn"></div>
+  <div class="tw"><table id="bantable"></table></div>
+ </section>
+
+ <section class="card">
+  <div class="card-h">
+   <div class="tabs" id="tabs"></div>
+   <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input type="search" id="filter" placeholder="Filtrer (IP, commande, mot de passe…)" autocomplete="off"></label>
+  </div>
+  <div class="tw"><table id="feed"></table></div>
+ </section>
+</main>
+<footer class="foot"><div class="feat" id="features"></div><a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">IP Geolocation by DB-IP</a> (CC BY 4.0) · Carte : Natural Earth · Drapeaux : flag-icons · Géolocalisation hors ligne : aucune IP n'est envoyée à un service externe.</footer>
+<div id="scrim"></div>
+<aside id="drawer" aria-hidden="true" aria-label="Fiche IP"></aside>
+<div id="replay" class="modal" aria-hidden="true">
+ <div class="modal-box">
+  <div class="modal-h"><b id="rp-title">Relecture</b><span class="muted" id="rp-time"></span>
+   <div class="actions"><button class="btn" id="rp-play" type="button"></button><button class="btn" id="rp-speed" type="button">×1</button>
+    <button class="btn" id="rp-input" type="button" title="Afficher aussi ce que l'attaquant a envoyé">Entrées : non</button>
+    <button class="btn icon" id="rp-close" type="button" title="Fermer (Échap)"></button></div></div>
+  <div class="rp-bar"><i id="rp-prog"></i></div>
+  <pre class="term" id="rp-term"></pre>
+ </div>
+</div>
+<div id="toast"></div>
+
+<script src="/static/app.js" defer></script></body></html>

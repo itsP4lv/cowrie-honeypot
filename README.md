@@ -64,18 +64,44 @@ Ce qu'il affiche, avec une actualisation toutes les 5 secondes :
 
 **Bannir une IP** : dans la fiche d'une IP, le bouton « Bannir l'IP » la bloque au pare-feu du VPS (honeypot **et** vrai SSH). Les IP bannies sont listées dans une section dédiée, avec leur statut (bloquée, en attente, refusée) et un bouton pour les débannir.
 
+**Rejouer une session** : Cowrie enregistre tout l'écran de chaque session. Le bouton « Rejouer » de la fiche la repasse comme une vidéo (vitesse ×1 à ×20). Ici, le bot de détection de honeypot dont je parle plus bas, en train de tester le faux shell :
+
+![Relecture d'une session](screenshots/replay.png)
+
+**Comportements et heures d'activité** : chaque session est classée automatiquement selon les commandes tapées (reconnaissance, téléchargement de payload, mineur de crypto, botnet, persistance, effacement de traces, détection de honeypot…). Une carte de chaleur montre à quelles heures les bots attaquent.
+
+![Comportements et heures d'activité](screenshots/behaviours.png)
+
+**Alertes et VirusTotal** (optionnels) : un message Discord ou Telegram quand un bot réussit à se connecter, dépose un fichier ou vient d'un nouveau pays ; et la réputation VirusTotal de chaque fichier capturé, recherchée **par son hash uniquement**.
+
 **Le flux en direct** des commandes, des connexions et des fichiers, avec une recherche.
 
 ![Flux des commandes](screenshots/feed-commands.png)
 ![Flux des connexions](screenshots/feed-logins.png)
 
 ### Côté technique
-- Un seul fichier Python (`panel/app.py`) : Flask pour l'API, et la page en HTML/CSS/JS sans framework. Les graphiques et la carte sont dessinés en SVG à la main.
+- **Python + Flask** côté serveur, page en HTML/CSS/JS sans framework (`panel/static/`). Les graphiques, la carte et le lecteur de sessions sont faits à la main.
+- **SQLite** : un thread lit les nouvelles lignes des logs au fil de l'eau (`panel/store.py`) au lieu de tout relire toutes les 5 s. Chaque événement est étiqueté avec le honeypot qui l'a produit, pour pouvoir en ajouter d'autres (voir [docs/ajouter-un-honeypot.md](docs/ajouter-un-honeypot.md)).
+- Modules : `geoip.py` (géoloc), `tags.py` (règles de classement), `alerts.py` (Discord/Telegram), `vt.py` (VirusTotal), `tty.py` (lecture des enregistrements de Cowrie).
 - La **géolocalisation est hors ligne**. Au build de l'image, `panel/fetch_assets.py` télécharge la base gratuite [DB-IP Lite](https://db-ip.com/db/lite.php), le fond de carte Natural Earth et les drapeaux [flag-icons](https://github.com/lipis/flag-icons). Aucune IP n'est envoyée à une API externe.
 - Routes d'API :
   - `GET /api/stats` : toutes les données du tableau de bord ;
   - `GET /api/ip/<ip>` : la fiche d'une IP ;
-  - `POST /api/bans` et `DELETE /api/bans/<ip>` : bannir ou débannir une IP.
+  - `GET /api/tty/<session>` : l'enregistrement d'une session ;
+  - `POST /api/bans` et `DELETE /api/bans/<ip>` : bannir ou débannir une IP ;
+  - `POST /api/alerts/test` : envoyer une alerte de test.
+
+### Configuration (optionnelle)
+Les secrets vont dans un fichier `.env`, jamais commité. Pour le créer : `cp .env.example .env`, remplir, puis `docker compose up -d panel`.
+
+| Variable | Rôle |
+|---|---|
+| `ALERT_DISCORD_WEBHOOK` | URL du webhook Discord |
+| `ALERT_TELEGRAM_TOKEN` / `ALERT_TELEGRAM_CHAT` | bot Telegram et id du chat |
+| `ALERT_EVENTS` | `login,file,country` par défaut |
+| `VT_API_KEY` | clé VirusTotal (gratuite) |
+
+Les alertes contiennent des textes écrits par les attaquants : ils sont nettoyés (caractères de contrôle, longueur), les mentions Discord sont désactivées (pas de `@everyone` déclenché par un bot), et il y a un anti-spam (une même alerte au plus toutes les 30 min, 30 par heure maximum).
 
 ### Comment marche le ban
 Le panel tourne dans Docker sans aucun droit sur le réseau du VPS, et je voulais que ça reste comme ça. Le bouton écrit donc seulement l'IP dans `bans/banlist.json`. C'est un petit service systemd sur l'hôte (`host/honeypot-bans.py`) qui surveille ce fichier et applique la liste au pare-feu.
@@ -144,6 +170,8 @@ docker compose build --build-arg GEO_MONTH=$(date +%Y-%m) panel && docker compos
 - Le panel n'est jamais exposé à Internet : il écoute sur `127.0.0.1`, et on y accède par tunnel SSH.
 - Cowrie tourne dans un conteneur avec un faux système : un bot « connecté » n'a pas accès au vrai VPS.
 - Le panel lit les logs en lecture seule (`/data:ro`).
+- Le conteneur du panel est durci : utilisateur non-root, système de fichiers en lecture seule, aucune capacité Linux, `no-new-privileges`, mémoire et nombre de processus limités. Il tourne sous gunicorn, pas avec le serveur de développement de Flask.
+- En-têtes HTTP : CSP stricte (aucun script externe ni inline), `X-Frame-Options`, `nosniff`, `no-referrer`. Toutes les requêtes dont l'en-tête Host n'est pas local sont refusées (protection contre le DNS rebinding à travers le tunnel).
 - Tout ce que le panel affiche vient des attaquants (identifiants, commandes, URL). Ces textes sont insérés avec `textContent`, jamais `innerHTML`, donc un `<script>` tapé par un bot s'affiche comme du simple texte.
 - Les malwares récupérés par Cowrie restent dans le volume Docker. Je ne les exécute jamais ; je les vérifie seulement par leur SHA-256 sur VirusTotal.
 
