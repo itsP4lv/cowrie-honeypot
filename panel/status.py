@@ -5,7 +5,7 @@ CHECK_EVERY secondes, et l'historique des dernières 24 h est gardé dans /state
 
 Cibles : variable STATUS_SITES (dans .env), au format
     Nom|https://exemple.fr;Autre nom|https://autre.fr/page;Port SSH|tcp://hote:22
-Les deux ports du honeypot (Cowrie) sont toujours ajoutés.
+Les ports des honeypots (Cowrie SSH/Telnet, Redis) sont toujours ajoutés.
 La liste est fixée par l'administrateur : la page ne peut pas demander d'URL arbitraire.
 """
 import json
@@ -29,7 +29,7 @@ KEEP = 24 * 3600          # historique conservé
 CERT_EVERY = 6 * 3600     # le certificat TLS est relu toutes les 6 h
 UA = "Mozilla/5.0 (compatible; honeypot-status/1.0)"
 
-DEFAULT_TARGETS = "Honeypot SSH|tcp://cowrie:2222;Honeypot Telnet|tcp://cowrie:2223"
+DEFAULT_TARGETS = "Honeypot SSH|tcp://cowrie:2222;Honeypot Telnet|tcp://cowrie:2223;Honeypot Redis|tcp://redis-hp:6379"
 
 
 def _parse_targets():

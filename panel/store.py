@@ -14,6 +14,7 @@ Types d'événements normalisés (`kind`) :
 import glob
 import json
 import os
+import socket
 import sqlite3
 import threading
 import time
@@ -25,6 +26,18 @@ DATA = os.environ.get("COWRIE_DATA", "/data")
 STATE = os.environ.get("PANEL_STATE", "/state")
 DB_PATH = os.path.join(STATE, "panel.db")
 SCAN_EVERY = 2.0  # secondes
+
+
+def _own_ips():
+    """IP du conteneur du panel : la page de statut sonde les honeypots depuis ici,
+    ces connexions ne doivent pas être comptées comme des attaques."""
+    try:
+        return {ai[4][0] for ai in socket.getaddrinfo(socket.gethostname(), None)}
+    except OSError:
+        return set()
+
+
+OWN_IPS = _own_ips()
 
 
 # ---------- Parseurs ----------
@@ -147,7 +160,7 @@ class Ingester(threading.Thread):
                     ev = src["parse"](raw) if isinstance(raw, dict) else None
                 except (ValueError, UnicodeDecodeError):
                     ev = None
-                if not ev or not ev.get("ts") or not ev.get("kind"):
+                if not ev or not ev.get("ts") or not ev.get("kind") or ev.get("ip") in OWN_IPS:
                     continue
                 ev["sensor"] = src["sensor"]
                 batch.append(tuple(_clean(ev.get(c)) for c in COLUMNS))
