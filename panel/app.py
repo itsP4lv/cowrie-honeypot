@@ -6,6 +6,7 @@
 - alerts.py  : alertes Discord / Telegram (optionnelles)
 - vt.py      : réputation VirusTotal des fichiers capturés, par hash (optionnelle)
 - tty.py     : relecture des sessions enregistrées par Cowrie
+- status.py  : page de statut (sites web et ports surveillés par le serveur)
 - static/    : la page (HTML/CSS/JS sans framework)
 
 Toutes les données affichées viennent des attaquants : la page les insère avec
@@ -25,6 +26,7 @@ from flask import Flask, abort, g, jsonify, request, send_from_directory
 
 import alerts
 import geoip
+import status
 import store
 import tags
 import tty
@@ -134,13 +136,13 @@ def bans_view():
     for ip, info in bans.items():
         gi = geo(ip)
         if ip in skipped:
-            status, detail = "refuse", str(skipped[ip])
+            st, detail = "refuse", str(skipped[ip])
         elif ip in done:
-            status, detail = "actif", ""
+            st, detail = "actif", ""
         else:
-            status, detail = "attente", ""
+            st, detail = "attente", ""
         rows.append({"ip": ip, "ts": info.get("ts", ""), "reason": info.get("reason", ""),
-                     "cc": gi["cc"], "country": gi["country"], "status": status, "detail": detail})
+                     "cc": gi["cc"], "country": gi["country"], "status": st, "detail": detail})
     rows.sort(key=lambda r: r["ts"], reverse=True)
     return {"list": rows, "helper_ts": helper_ts, "helper_error": applied.get("error", ""),
             "helper_late": bool(bans) and list_mtime - helper_ts > 30 and time.time() - list_mtime > 30}
@@ -384,13 +386,45 @@ def alerts_test():
     return jsonify({"ok": True, "channels": alerts.CHANNELS})
 
 
-# ---------- Fichiers ----------
+@app.get("/api/status")
+def status_api():
+    return jsonify(status.view())
+
+
+@app.get("/api/home")
+def home_api():
+    """Résumé léger pour la page d'accueil : chiffres du honeypot + état des services."""
+    hp = None
+    if INGESTER.ready.is_set():
+        con = db()
+        one = lambda sql, a=(): con.execute(sql, a).fetchone()[0]  # noqa: E731
+        hp = {"connexions": one("SELECT COUNT(*) FROM events WHERE kind='connect'"),
+              "connexions_24h": one("SELECT COUNT(*) FROM events WHERE kind='connect' AND ts >= ?", (store.since_iso(24),)),
+              "ips_24h": one("SELECT COUNT(DISTINCT ip) FROM events WHERE kind='connect' AND ts >= ?", (store.since_iso(24),)),
+              "last": one("SELECT MAX(ts) FROM events") or ""}
+    return jsonify({"honeypot": hp, "status": status.summary()})
+
+
+# ---------- Pages ----------
+# /          : accueil (choix entre les espaces, façon Pterodactyl)
+# /honeypot  : tableau de bord du honeypot
+# /status    : état des sites surveillés
 @app.get("/")
-def index():
+def home():
+    return send_from_directory(STATIC, "home.html", max_age=0)
+
+
+@app.get("/honeypot")
+def honeypot_page():
     return send_from_directory(STATIC, "index.html", max_age=0)
 
 
-@app.get("/static/<any('app.js','app.css'):name>")
+@app.get("/status")
+def status_page():
+    return send_from_directory(STATIC, "status.html", max_age=0)
+
+
+@app.get("/static/<any('app.js','app.css','portal.js'):name>")
 def static_file(name):
     return send_from_directory(STATIC, name, max_age=0)
 
@@ -424,6 +458,7 @@ def start_background():
     alerts.start()
     threading.Thread(target=_seed_alerts, daemon=True, name="seed").start()
     vt.start(INGESTER.ready)
+    status.start()
 
 
 start_background()

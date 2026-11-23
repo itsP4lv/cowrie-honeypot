@@ -38,6 +38,11 @@ Lire les logs JSON de Cowrie à la main, c'est vite pénible, alors j'ai codé u
 
 ## Le panel
 
+En ouvrant le panel, on arrive sur une **page d'accueil** qui propose deux espaces, un peu comme la liste des serveurs de Pterodactyl :
+
+- **Dashboard honeypot** (`/honeypot`) : tout ce qui est décrit ci-dessous ;
+- **Statut des services** (`/status`) : le serveur vérifie chaque minute des sites web et les ports du honeypot, et affiche leur état, le temps de réponse, la disponibilité sur 24 h et l'expiration du certificat TLS. La liste des sites se règle dans `.env` (`STATUS_SITES`).
+
 | Thème sombre | Thème clair |
 |---|---|
 | ![Thème sombre](screenshots/panel-dark.png) | ![Thème clair](screenshots/panel-light.png) |
