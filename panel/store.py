@@ -37,7 +37,9 @@ def _own_ips():
         return set()
 
 
-OWN_IPS = _own_ips()
+# IP à ne jamais compter comme des attaques (mes propres tests), séparées par des virgules dans .env.
+IGNORE_IPS = {ip.strip() for ip in os.environ.get("PANEL_IGNORE_IPS", "").split(",") if ip.strip()}
+OWN_IPS = _own_ips() | IGNORE_IPS
 
 
 # ---------- Parseurs ----------
@@ -135,6 +137,11 @@ class Ingester(threading.Thread):
     def run(self):
         con = connect()
         con.executescript(SCHEMA)
+        if IGNORE_IPS:  # retire aussi ce qui avait été importé avant de les ignorer
+            q = ",".join("?" * len(IGNORE_IPS))
+            with con:
+                con.execute(f"DELETE FROM events WHERE ip IN ({q})", tuple(IGNORE_IPS))
+                con.execute(f"DELETE FROM tags WHERE ip IN ({q})", tuple(IGNORE_IPS))
         first = True
         while True:
             try:

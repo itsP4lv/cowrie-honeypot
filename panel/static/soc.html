@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>SOC · Honeypot</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛰️</text></svg>">
+<link rel="stylesheet" href="/static/app.css"></head><body data-page="soc">
+
+<header class="top">
+ <div class="brand">
+  <a class="back" href="/" title="Retour à l'accueil" aria-label="Retour à l'accueil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></a>
+  <div class="logo" style="background:linear-gradient(135deg,var(--ko),var(--vio))">🛰️</div>
+  <div><h1>Centre de surveillance (SOC)</h1><p>Bilan du honeypot depuis sa mise en ligne sur Internet</p></div>
+ </div>
+ <div class="actions">
+  <span class="status" id="status"><i></i><span id="live">connexion…</span></span>
+  <button class="btn" id="copy" type="button" title="Copier le rapport en texte">Copier le rapport</button>
+  <button class="btn icon" id="theme" title="Changer de thème"></button>
+ </div>
+</header>
+
+<main>
+ <section class="card soc-hero" id="hero">
+  <div class="soc-level" id="level"></div>
+  <div class="soc-story"><h2 id="headline">Chargement…</h2><p id="story" class="muted"></p></div>
+ </section>
+
+ <section class="kpis" id="kpis"></section>
+
+ <section class="row">
+  <div class="card">
+   <div class="card-h"><h2>Activité jour par jour<small>connexions par jour (barres) et IP uniques cumulées (courbe), en UTC</small></h2></div>
+   <div class="chart soc-chart" id="days"></div>
+  </div>
+  <div class="card">
+   <div class="card-h"><h2>Dernières 24 h<small>comparé aux 24 h précédentes</small></h2></div>
+   <div class="soc-trend" id="trend"></div>
+  </div>
+ </section>
+
+ <section class="row">
+  <div class="card">
+   <div class="card-h"><h2>Journal des incidents<small>logins réussis, fichiers déposés, comportements dangereux, bans</small></h2>
+    <div class="soc-filters" id="filters"></div></div>
+   <div class="tw"><table><thead><tr><th>Heure</th><th>Gravité</th><th>Événement</th><th>IP</th><th>Détail</th></tr></thead>
+    <tbody id="incidents"></tbody></table></div>
+  </div>
+  <div class="card">
+   <div class="card-h"><h2>Chronologie<small>les « premières fois » depuis la mise en ligne</small></h2></div>
+   <ol class="soc-timeline" id="timeline"></ol>
+  </div>
+ </section>
+
+ <section class="grid">
+  <div class="card"><div class="card-h"><h2>Surface d'attaque<small>connexions par service exposé</small></h2></div><div class="soc-bars" id="services"></div></div>
+  <div class="card"><div class="card-h"><h2>Opérateurs les plus actifs<small>nombre d'IP par réseau (AS)</small></h2></div><div class="soc-bars" id="asn"></div></div>
+  <div class="card"><div class="card-h"><h2>Continents<small>nombre d'IP par continent</small></h2></div><div class="soc-bars" id="continents"></div></div>
+ </section>
+</main>
+<footer class="foot">Niveau de menace : <b>critique</b> si un comportement critique (mineur, botnet, persistance, fichier déposé) a eu lieu dans la dernière heure ; <b>élevé</b> s'il y en a eu dans les 24 h ou si l'activité de la dernière heure dépasse 2× la moyenne ; <b>modéré</b> pour l'activité habituelle d'Internet ; <b>faible</b> en dessous de la moitié de la moyenne. Mise à jour toutes les 30 s.</footer>
+
+<script src="/static/soc.js" defer></script></body></html>

@@ -522,3 +522,5 @@ function setPaused(p){paused=p;clearInterval(timer);$("#pause").replaceChildren(
 $("#pause").onclick=()=>setPaused(!paused);
 document.addEventListener("visibilitychange",()=>{if(!document.hidden&&!paused)refresh()});
 setPaused(false);
+/* Lien direct vers une fiche (depuis la page SOC) : /honeypot#ip=1.2.3.4 */
+{const m=/^#ip=([0-9a-fA-F.:]{3,45})$/.exec(location.hash);if(m)openIp(m[1])}

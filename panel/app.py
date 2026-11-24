@@ -7,6 +7,7 @@
 - vt.py      : réputation VirusTotal des fichiers capturés, par hash (optionnelle)
 - tty.py     : relecture des sessions enregistrées par Cowrie
 - status.py  : page de statut (sites web et ports surveillés par le serveur)
+- soc.py     : vue SOC (bilan depuis la mise en ligne, menace, incidents)
 - static/    : la page (HTML/CSS/JS sans framework)
 
 Toutes les données affichées viennent des attaquants : la page les insère avec
@@ -27,6 +28,7 @@ from flask import Flask, abort, g, jsonify, request, send_from_directory
 import alerts
 import autoban
 import geoip
+import soc
 import status
 import store
 import tags
@@ -340,6 +342,19 @@ def stats():
     return jsonify(data)
 
 
+_soc_cache = {"t": 0, "data": None}
+
+
+@app.get("/api/soc")
+def soc_api():
+    ready_or_503()
+    with _stats_lock:
+        if time.time() - _soc_cache["t"] > 10 or _soc_cache["data"] is None:
+            _soc_cache["data"] = soc.compute(db(), geo, bans_view()["list"])
+            _soc_cache["t"] = time.time()
+        return jsonify(_soc_cache["data"])
+
+
 @app.get("/api/ip/<path:ip>")
 def ip_detail(ip):
     """Fiche complète d'une IP : géoloc, sessions, identifiants, commandes, fichiers."""
@@ -442,6 +457,8 @@ def home_api():
         hp = {"connexions": one("SELECT COUNT(*) FROM events WHERE kind='connect'"),
               "connexions_24h": one("SELECT COUNT(*) FROM events WHERE kind='connect' AND ts >= ?", (store.since_iso(24),)),
               "ips_24h": one("SELECT COUNT(DISTINCT ip) FROM events WHERE kind='connect' AND ts >= ?", (store.since_iso(24),)),
+              "ips": one("SELECT COUNT(DISTINCT ip) FROM events WHERE kind='connect'"),
+              "first": one("SELECT MIN(ts) FROM events") or "",
               "last": one("SELECT MAX(ts) FROM events") or ""}
     return jsonify({"honeypot": hp, "status": status.summary()})
 
@@ -450,6 +467,7 @@ def home_api():
 # /          : accueil (choix entre les espaces, façon Pterodactyl)
 # /honeypot  : tableau de bord du honeypot
 # /status    : état des sites surveillés
+# /soc       : vue SOC du honeypot
 @app.get("/")
 def home():
     return send_from_directory(STATIC, "home.html", max_age=0)
@@ -465,7 +483,12 @@ def status_page():
     return send_from_directory(STATIC, "status.html", max_age=0)
 
 
-@app.get("/static/<any('app.js','app.css','portal.js'):name>")
+@app.get("/soc")
+def soc_page():
+    return send_from_directory(STATIC, "soc.html", max_age=0)
+
+
+@app.get("/static/<any('app.js','app.css','portal.js','soc.js'):name>")
 def static_file(name):
     return send_from_directory(STATIC, name, max_age=0)
 

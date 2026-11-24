@@ -30,7 +30,12 @@ async function home(){
    setPill($("#hp-state"),fresh?"up":"slow",fresh?"Actif":"Calme");
    box.replaceChildren(...[["Connexions 24 h",nf.format(hp.connexions_24h)],["IP 24 h",nf.format(hp.ips_24h)],["Total",nf.format(hp.connexions)],["Dernier événement",ago(hp.last)||"—"]]
     .map(([l,v])=>{const s=el("div","sstat");s.append(el("b","",v),el("span","",l));return s}));
-  }else setPill($("#hp-state"),"pending","Import…");
+   const up=hp.first?(Date.now()-new Date(hp.first))/1000:0;
+   if(up>0){const j=Math.floor(up/86400),h=Math.floor(up%86400/3600);
+    setPill($("#soc-state"),"up","En ligne depuis "+(j?j+" j "+h+" h":h+" h"));
+    $("#soc-stats").replaceChildren(...[["Connexions",nf.format(hp.connexions)],["IP uniques",nf.format(hp.ips)],["Par heure","≈ "+nf.format(Math.round(hp.connexions/(up/3600)))]]
+     .map(([l,v])=>{const s=el("div","sstat");s.append(el("b","",v),el("span","",l));return s}))}
+  }else{setPill($("#hp-state"),"pending","Import…");setPill($("#soc-state"),"pending","Import…")}
   const st=d.status;
   if(st.down)setPill($("#st-state"),"down",st.down+" hors ligne");
   else if(st.slow)setPill($("#st-state"),"slow",st.slow+" lent"+(st.slow>1?"s":""));

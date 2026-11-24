@@ -39,9 +39,10 @@ Lire les logs JSON de Cowrie à la main, c'est vite pénible, alors j'ai codé u
 
 ## Le panel
 
-En ouvrant le panel, on arrive sur une **page d'accueil** qui propose deux espaces, un peu comme la liste des serveurs de Pterodactyl :
+En ouvrant le panel, on arrive sur une **page d'accueil** qui propose trois espaces, un peu comme la liste des serveurs de Pterodactyl :
 
 - **Dashboard honeypot** (`/honeypot`) : tout ce qui est décrit ci-dessous ;
+- **Centre de surveillance (SOC)** (`/soc`) : le bilan depuis la mise en ligne, du genre « en ligne depuis 1 j 16 h : 3 221 connexions de 182 IP venant de 45 pays, soit une toutes les 45 s ». On y trouve aussi un niveau de menace, la tendance sur 24 h, un journal des incidents classés par gravité, la chronologie des « premières fois » (premier login, premier fichier déposé, 1 000e connexion…), les services et opérateurs les plus visés, et un bouton pour copier le rapport en texte ;
 - **Statut des services** (`/status`) : le serveur vérifie chaque minute des sites web et les ports du honeypot, et affiche leur état, le temps de réponse, la disponibilité sur 24 h et l'expiration du certificat TLS. La liste des sites se règle dans `.env` (`STATUS_SITES`).
 
 | Thème sombre | Thème clair |
@@ -94,10 +95,11 @@ Ce qu'il affiche, avec une actualisation toutes les 5 secondes :
 ### Côté technique
 - **Python + Flask** côté serveur, page en HTML/CSS/JS sans framework (`panel/static/`). Les graphiques, la carte et le lecteur de sessions sont faits à la main.
 - **SQLite** : un thread lit les nouvelles lignes des logs au fil de l'eau (`panel/store.py`) au lieu de tout relire toutes les 5 s. Chaque événement est étiqueté avec le honeypot qui l'a produit, pour pouvoir en ajouter d'autres (voir [docs/ajouter-un-honeypot.md](docs/ajouter-un-honeypot.md)).
-- Modules : `geoip.py` (géoloc), `tags.py` (règles de classement), `alerts.py` (Discord/Telegram), `vt.py` (VirusTotal), `tty.py` (lecture des enregistrements de Cowrie), `autoban.py` (ban automatique).
+- Modules : `geoip.py` (géoloc), `tags.py` (règles de classement), `alerts.py` (Discord/Telegram), `vt.py` (VirusTotal), `tty.py` (lecture des enregistrements de Cowrie), `autoban.py` (ban automatique), `soc.py` (vue SOC).
 - La **géolocalisation est hors ligne**. Au build de l'image, `panel/fetch_assets.py` télécharge la base gratuite [DB-IP Lite](https://db-ip.com/db/lite.php), le fond de carte Natural Earth et les drapeaux [flag-icons](https://github.com/lipis/flag-icons). Aucune IP n'est envoyée à une API externe.
 - Routes d'API :
   - `GET /api/stats` : toutes les données du tableau de bord ;
+  - `GET /api/soc` : le bilan de la page SOC ;
   - `GET /api/ip/<ip>` : la fiche d'une IP ;
   - `GET /api/tty/<session>` : l'enregistrement d'une session ;
   - `POST /api/bans` et `DELETE /api/bans/<ip>` : bannir ou débannir une IP ;
@@ -112,6 +114,7 @@ Les secrets vont dans un fichier `.env`, jamais commité. Pour le créer : `cp .
 | `ALERT_TELEGRAM_TOKEN` / `ALERT_TELEGRAM_CHAT` | bot Telegram et id du chat |
 | `ALERT_EVENTS` | `login,file,country` par défaut |
 | `VT_API_KEY` | clé VirusTotal (gratuite) |
+| `PANEL_IGNORE_IPS` | mes propres IP, jamais comptées comme des attaques (séparées par des virgules) |
 | `AUTOBAN_ENABLED` | ban automatique des IP qui spamment les commandes (`true` par défaut) |
 | `AUTOBAN_COMMANDS` / `AUTOBAN_WINDOW` | seuil : plus de 30 commandes en 60 s par défaut |
 | `AUTOBAN_HOURS` | durée du ban automatique, 24 h par défaut (`0` = définitif) |
