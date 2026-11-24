@@ -23,6 +23,8 @@ const ICONS={ /* icônes fixes (pas de données attaquant) */
  ext:'<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
  ban:'<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
  replay:'<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="m10 9 5 3-5 3z"/>',
+ max:'<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>',
+ min:'<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>',
  bell:'<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
 };
 function icon(name){const s=document.createElementNS(NS,"svg");s.setAttribute("viewBox","0 0 24 24");s.setAttribute("fill","none");s.setAttribute("stroke","currentColor");
@@ -48,9 +50,11 @@ const fmtDur=s=>{if(s==null||isNaN(s))return"";s=Math.round(s);if(s<60)return s+
 const ago=ts=>{const d=Date.now()-new Date(ts);if(isNaN(d))return"";const m=Math.round(d/6e4);if(m<1)return"à l'instant";if(m<60)return"il y a "+m+" min";const h=Math.round(m/60);if(h<48)return"il y a "+h+" h";return"il y a "+Math.round(h/24)+" j"};
 
 /* ---------- Thème ---------- */
-function applyTheme(t){document.documentElement.dataset.theme=t;$("#theme").replaceChildren(icon(t==="light"?"moon":"sun"));localStorage.setItem("theme",t)}
+const THEMES=["dark","light","ptero","terminal"];
+function applyTheme(t){if(!THEMES.includes(t))t="dark";document.documentElement.dataset.theme=t;$("#theme").value=t;
+ $("#theme-ico").replaceChildren(icon(t==="light"?"sun":"moon"));localStorage.setItem("theme",t)}
 applyTheme(localStorage.getItem("theme")||(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark"));
-$("#theme").onclick=()=>{applyTheme(document.documentElement.dataset.theme==="light"?"dark":"light");if(last)drawChart(last.per_hour)};
+$("#theme").onchange=e=>{applyTheme(e.target.value);if(last)drawChart(last.per_hour)};
 
 /* ---------- KPI ---------- */
 const KPIS=[
@@ -152,7 +156,8 @@ function updateCountries(rows){const box=$("#countries");if(!rows.length)return 
 /* ---------- Carte (projection équirectangulaire, contours Natural Earth en TopoJSON) ---------- */
 const MAP={W:1000,top:84,bot:-58};MAP.H=MAP.W*(MAP.top-MAP.bot)/360;
 const mx=lon=>(lon+180)/360*MAP.W,my=lat=>(MAP.top-lat)/360*MAP.W;
-const map={};
+const map={view:{x:0,y:0,w:MAP.W,h:MAP.H},full:false,list:[],
+ night:localStorage.getItem("map-night")!=="0",tzLines:localStorage.getItem("map-tz")!=="0"};
 function topoPath(t){const [sx,sy]=t.transform.scale,[tx,ty]=t.transform.translate;
  const arcs=t.arcs.map(a=>{let x=0,y=0;return a.map(([dx,dy])=>{x+=dx;y+=dy;return[mx(x*sx+tx),my(y*sy+ty)]})});
  const ring=r=>{const pts=[];r.forEach(i=>{const a=i<0?arcs[~i].slice().reverse():arcs[i];pts.push(...(pts.length?a.slice(1):a))});
@@ -160,38 +165,120 @@ function topoPath(t){const [sx,sy]=t.transform.scale,[tx,ty]=t.transform.transla
   return pts.map((p,i)=>(i&&Math.abs(p[0]-pts[i-1][0])<MAP.W/2?"L":"M")+p[0].toFixed(1)+","+p[1].toFixed(1)).join("")+"Z"};
  let d="";for(const g of Object.values(t.objects)[0].geometries){const polys=g.type==="Polygon"?[g.arcs]:g.type==="MultiPolygon"?g.arcs:[];for(const p of polys)for(const r of p)d+=ring(r)}
  return d}
-(function initMap(){const box=$("#map");map.svg=svg("svg",{viewBox:`0 0 ${MAP.W} ${MAP.H.toFixed(1)}`});
- for(let lon=-150;lon<=150;lon+=30)map.svg.append(svg("line",{class:"grat",x1:mx(lon),x2:mx(lon),y1:0,y2:MAP.H}));
- for(let lat=-30;lat<=60;lat+=30)map.svg.append(svg("line",{class:"grat",x1:0,x2:MAP.W,y1:my(lat),y2:my(lat)}));
- const land=svg("path",{class:"land"});map.dots=svg("g",{});map.svg.append(land,map.dots);
- map.tip=el("div","tip maptip");map.empty=el("div","map-empty");box.replaceChildren(map.svg,map.tip,map.empty);
+
+/* Fuseau horaire : nom IANA fourni par le serveur, sinon estimation d'après la longitude */
+const tzFmt={};
+function localTime(tz,lon,d=new Date()){
+ if(tz){try{const f=tzFmt[tz]||(tzFmt[tz]=new Intl.DateTimeFormat("fr-FR",{timeZone:tz,hour:"2-digit",minute:"2-digit",hourCycle:"h23",timeZoneName:"shortOffset"}));
+  const p=f.formatToParts(d),get=k=>(p.find(x=>x.type===k)||{}).value||"";let off=get("timeZoneName").replace("GMT","UTC");if(off==="UTC")off="UTC+0";
+  const h=+get("hour");return{time:get("hour")+":"+get("minute"),off,tz,night:h<7||h>=22,est:false}}catch(e){}}
+ if(lon==null)return null;
+ const o=Math.round(lon/15),t=new Date(d.getTime()+o*36e5),h=t.getUTCHours();
+ return{time:String(h).padStart(2,"0")+":"+String(t.getUTCMinutes()).padStart(2,"0"),off:"UTC"+(o<0?"−":"+")+Math.abs(o),tz:"",night:h<7||h>=22,est:true}}
+const tzLabel=i=>i?(i.est?"≈ ":"")+i.off+(i.tz?" · "+i.tz.replace(/_/g," "):""):"";
+
+/* Zone de nuit : point subsolaire approché (déclinaison + heure UTC), à ~1° près */
+function sunPos(d){const N=(d-Date.UTC(d.getUTCFullYear(),0,0))/864e5;
+ return{decl:-23.44*Math.cos(2*Math.PI/365*(N+10)),lon:-15*(d.getUTCHours()+d.getUTCMinutes()/60-12)}}
+function nightPath(d){const rad=Math.PI/180,s=sunPos(d),dc=Math.abs(s.decl)<.1?(s.decl<0?-.1:.1):s.decl,t=Math.tan(dc*rad),pts=[];
+ for(let lon=-180;lon<=180;lon+=2)pts.push(mx(lon).toFixed(1)+","+my(Math.atan(-Math.cos((lon-s.lon)*rad)/t)/rad).toFixed(1));
+ const edge=(dc>0?my(-90):my(90)).toFixed(1);return"M"+pts.join("L")+"L"+MAP.W+","+edge+"L0,"+edge+"Z"}
+function drawSky(){const d=new Date(),s=sunPos(d);map.nightP.setAttribute("d",nightPath(d));
+ let lon=((s.lon+540)%360)-180;map.sun.setAttribute("cx",mx(lon));map.sun.setAttribute("cy",my(s.decl))}
+
+(function initMap(){const box=$("#map");map.svg=svg("svg",{viewBox:`0 0 ${MAP.W} ${MAP.H.toFixed(1)}`,preserveAspectRatio:"xMidYMid meet"});
+ const grat=svg("g",{});
+ for(let lon=-150;lon<=150;lon+=30)grat.append(svg("line",{class:"grat",x1:mx(lon),x2:mx(lon),y1:0,y2:MAP.H}));
+ for(let lat=-30;lat<=60;lat+=30)grat.append(svg("line",{class:"grat",x1:0,x2:MAP.W,y1:my(lat),y2:my(lat)}));
+ /* fuseaux horaires théoriques (tranches de 15°) */
+ map.tzg=svg("g",{class:"tzg"});map.tzLbl=svg("g",{class:"tzl"});
+ for(let k=0;k<24;k++){const lon=-172.5+15*k;map.tzg.append(svg("line",{x1:mx(lon),x2:mx(lon),y1:0,y2:MAP.H}))}
+ for(let o=-12;o<=12;o++){const t=svg("text",{x:mx(Math.max(-176,Math.min(176,o*15))),"text-anchor":"middle"});t.textContent=o?(o>0?"+":"−")+Math.abs(o):"UTC";map.tzLbl.append(t)}
+ map.tzg.append(map.tzLbl);
+ const land=svg("path",{class:"land"});map.nightP=svg("path",{class:"night"});map.sun=svg("circle",{class:"sun",r:5});
+ map.sky=svg("g",{class:"sky"});map.sky.append(map.nightP,map.sun);map.dots=svg("g",{});
+ map.svg.append(grat,land,map.sky,map.tzg,map.dots);
+ map.tip=el("div","tip maptip");map.empty=el("div","map-empty");
+ /* boutons de zoom (visibles en plein écran) */
+ const zb=el("div","map-zoom");[["+","Zoomer",()=>zoomBy(1/1.6)],["−","Dézoomer",()=>zoomBy(1.6)],["⟲","Vue entière",()=>setView(0,0,MAP.W)]].forEach(([t,ti,fn])=>{const b=el("button","btn icon",t);b.type="button";b.title=ti;b.onclick=fn;zb.append(b)});
+ box.replaceChildren(map.svg,map.tip,map.empty,zb);
  fetch("/map/land.json").then(r=>r.ok?r.json():null).then(t=>{if(t)land.setAttribute("d",topoPath(t))}).catch(()=>{});
- box.addEventListener("mouseleave",()=>map.tip.classList.remove("on"))})();
-function mapTip(g,ev){const b=$("#map").getBoundingClientRect(),t=map.tip;
- const h=el("b");h.append(flag(g.cc),placeOf(g));
- const l1=el("div"),e1=el("em",""),l2=el("div"),e2=el("em","");
- l1.append("Adresses IP",e1);e1.textContent=nf.format(g.ips.length);l2.append("Connexions",e2);e2.textContent=nf.format(g.conn);
- const list=el("span","ips",g.ips.slice(0,4).map(r=>r.ip).join("  ")+(g.ips.length>4?"  +"+(g.ips.length-4):""));
- t.replaceChildren(h,l1,l2,list);t.style.left=Math.min(b.width-110,Math.max(110,ev.clientX-b.left))+"px";t.style.top=(ev.clientY-b.top)+"px";t.classList.toggle("below",ev.clientY-b.top<b.height/2);t.classList.add("on")}
+ box.addEventListener("mouseleave",()=>map.tip.classList.remove("on"));
+ /* zoom molette + déplacement à la souris, seulement en plein écran pour ne pas gêner le défilement de la page */
+ box.addEventListener("wheel",e=>{if(!map.full)return;e.preventDefault();const dy=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?400:1);zoomBy(Math.exp(Math.max(-.7,Math.min(.7,dy*.002))),svgPoint(e))},{passive:false});
+ let drag=null;
+ box.addEventListener("pointerdown",e=>{if(!map.full||e.button!==0||e.target.closest(".map-zoom"))return;drag={x:e.clientX,y:e.clientY,v:{...map.view},moved:false};box.setPointerCapture(e.pointerId)});
+ box.addEventListener("pointermove",e=>{if(!drag)return;const s=pxScale(),dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>3)drag.moved=true;
+  if(drag.moved){box.classList.add("dragging");map.tip.classList.remove("on");setView(drag.v.x-dx*s,drag.v.y-dy*s,drag.v.w)}});
+ const end=()=>{if(drag&&drag.moved)map.justDragged=true;drag=null;box.classList.remove("dragging");setTimeout(()=>map.justDragged=false,0)};
+ box.addEventListener("pointerup",end);box.addEventListener("pointercancel",end);
+ /* bouton plein écran */
+ const fb=$("#map-full");fb.replaceChildren(icon("max"));fb.onclick=()=>setFull(!map.full);
+ drawSky();setInterval(drawSky,6e4)})();
+
+/* unités SVG par pixel écran (le SVG est centré en « meet ») */
+function pxScale(){const r=map.svg.getBoundingClientRect();return map.view.w/Math.min(r.width,r.height*map.view.w/map.view.h)}
+function svgPoint(e){const r=map.svg.getBoundingClientRect(),s=pxScale(),cw=map.view.w/s,ch=map.view.h/s;
+ return{x:map.view.x+(e.clientX-r.left-(r.width-cw)/2)*s,y:map.view.y+(e.clientY-r.top-(r.height-ch)/2)*s}}
+function setView(x,y,w){w=Math.max(MAP.W/16,Math.min(MAP.W,w));const h=w*MAP.H/MAP.W;
+ x=Math.max(0,Math.min(MAP.W-w,x));y=Math.max(0,Math.min(MAP.H-h,y));map.view={x,y,w,h};
+ map.svg.setAttribute("viewBox",`${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)}`);
+ const s=pxScale();map.tzLbl.setAttribute("font-size",(11*s).toFixed(2));map.tzLbl.querySelectorAll("text").forEach(t=>t.setAttribute("y",(y+14*s).toFixed(2)));
+ map.sun.setAttribute("r",(6*s).toFixed(2));drawDots()}
+function zoomBy(f,p){const v=map.view;p=p||{x:v.x+v.w/2,y:v.y+v.h/2};const w=Math.max(MAP.W/16,Math.min(MAP.W,v.w*f)),k=w/v.w;
+ setView(p.x-(p.x-v.x)*k,p.y-(p.y-v.y)*k,w)}
+function setFull(on){map.full=on;const c=$("#mapcard");c.classList.toggle("full",on);document.body.classList.toggle("noscroll",on);
+ $("#map-full").replaceChildren(icon(on?"min":"max"));$("#map-full").title=on?"Réduire (Échap)":"Agrandir la carte";
+ map.tip.classList.remove("on");requestAnimationFrame(()=>{setView(0,0,MAP.W);renderMapSide()})}
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&map.full&&!curIp&&!$("#replay").classList.contains("open"))setFull(false)});
+window.addEventListener("resize",()=>{if(map.full)setView(map.view.x,map.view.y,map.view.w)});
+
+function topOrg(g){const c={};g.ips.forEach(r=>{if(r.org)c[r.org]=(c[r.org]||0)+1});return Object.keys(c).sort((a,b)=>c[b]-c[a])[0]||""}
+function mapTip(g,ev){const b=$("#map").getBoundingClientRect(),t=map.tip,lt=localTime(g.tz,g.lon);
+ const h=el("b");h.append(flag(g.cc),placeOf(g));const nodes=[h];
+ const org=topOrg(g);if(org)nodes.push(el("span","sub",org+(g.asn?" · AS"+g.asn:"")));
+ const line=(k,v,cls)=>{const l=el("div",cls||""),e=el("em","",v);l.append(k,e);nodes.push(l)};
+ line("Adresses IP",nf.format(g.ips.length));line("Connexions",nf.format(g.conn));line("Tentatives de login",nf.format(g.tent));
+ if(g.ok)line("Logins réussis",nf.format(g.ok),"bad");line("Dernière activité",ago(g.last));
+ if(lt){const l=el("div","lt"),e=el("em");e.append(lt.night?icon("moon"):icon("sun"),lt.time);l.append("Heure locale",e);nodes.push(l,el("span","sub",tzLabel(lt)))}
+ nodes.push(el("span","ips",g.ips.slice(0,4).map(r=>r.ip).join("  ")+(g.ips.length>4?"  +"+(g.ips.length-4):"")));
+ t.replaceChildren(...nodes);t.style.left=Math.min(b.width-130,Math.max(130,ev.clientX-b.left))+"px";t.style.top=(ev.clientY-b.top)+"px";t.classList.toggle("below",ev.clientY-b.top<b.height/2);t.classList.add("on")}
+function mapClick(g){if(map.justDragged)return;if(g.ips.length===1)return openIp(g.ips[0].ip);
+ if(map.full)setFull(false);$("#ipfilter").value=g.city||countryOf(g);renderIps();$("#iptable").closest(".card").scrollIntoView({behavior:"smooth",block:"start"})}
+function highlight(key,on){map.dots.querySelectorAll(".pt").forEach(p=>p.classList.toggle("hl",on&&p.dataset.k===key))}
+function drawDots(){const list=map.list,max=Math.max(1,...list.map(g=>g.conn)),now=Date.now(),z=Math.sqrt(map.view.w/MAP.W);
+ map.dots.replaceChildren(...list.slice().reverse().map(g=>{const p=svg("g",{class:"pt"+(g.ok?" ok":"")}),x=mx(g.lon),y=my(g.lat),r=(3.5+10*Math.sqrt(g.conn/max))*z;p.dataset.k=g.key;
+  if(now-new Date(g.last)<15*6e4)p.append(svg("circle",{class:"p",cx:x,cy:y,r}));
+  p.append(svg("circle",{class:"c",cx:x,cy:y,r}));
+  p.addEventListener("mousemove",ev=>mapTip(g,ev));p.addEventListener("click",()=>mapClick(g));
+  return p}))}
+function renderMapSide(){if(!map.full)return;const side=$("#map-side"),now=new Date();
+ const here=Intl.DateTimeFormat().resolvedOptions().timeZone,hm=d=>d.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});
+ const clocks=el("div","clocks");[["UTC",hm(new Date(now.getTime()+now.getTimezoneOffset()*6e4))],["Chez toi",hm(now)]].forEach(([k,v])=>{const c=el("div");c.append(el("small","",k),el("b","",v));clocks.append(c)});
+ clocks.title="Ton fuseau : "+here;
+ const tg=el("div","toggles");[["night","Nuit","map-night"],["tzLines","Fuseaux","map-tz"]].forEach(([k,l,ls])=>{const b=el("button","btn sm"+(map[k]?" on":""),l);b.type="button";
+  b.onclick=()=>{map[k]=!map[k];localStorage.setItem(ls,map[k]?"1":"0");applyMapLayers();renderMapSide()};tg.append(b)});
+ const head=el("div","side-h");head.append(clocks,tg);
+ const list=el("div","side-list");
+ if(!map.list.length)list.append(emptyBox("Aucune IP géolocalisée"));
+ map.list.slice(0,150).forEach(g=>{const lt=localTime(g.tz,g.lon,now),row=el("div","loc"+(g.ok?" ok":"")),lb=el("div","lb"),tm=el("div","tm");
+  const t1=el("span","pl");t1.append(flag(g.cc),placeOf(g));lb.append(t1,el("small","",[topOrg(g),nf.format(g.ips.length)+" IP",nf.format(g.conn)+" conn."].filter(Boolean).join(" · ")));
+  if(lt){const b=el("b");b.append(lt.night?icon("moon"):icon("sun"),lt.time);tm.append(b,el("small","",(lt.est?"≈ ":"")+lt.off));tm.title=tzLabel(lt)}
+  row.append(lb,tm);row.onmouseenter=()=>highlight(g.key,true);row.onmouseleave=()=>highlight(g.key,false);row.onclick=()=>mapClick(g);list.append(row)});
+ const st=side.querySelector(".side-list"),sc=st?st.scrollTop:0;side.replaceChildren(head,el("div","side-t",nf.format(map.list.length)+" emplacements · classés par connexions"),list);list.scrollTop=sc}
+function applyMapLayers(){const c=$("#mapcard");c.classList.toggle("no-night",!map.night);c.classList.toggle("no-tz",!map.tzLines)}
+applyMapLayers();
 function updateMap(ips){
  const groups=new Map();
  for(const r of ips){if(r.lat==null||r.lon==null)continue;const k=r.lat.toFixed(1)+","+r.lon.toFixed(1);let g=groups.get(k);
-  if(!g){g={lat:r.lat,lon:r.lon,cc:r.cc,city:r.city,region:r.region,country:r.country,ips:[],conn:0,ok:0,last:""};groups.set(k,g)}
-  g.ips.push(r);g.conn+=r.connexions;g.ok+=r.reussies;if(r.last>g.last)g.last=r.last}
+  if(!g){g={key:k,lat:r.lat,lon:r.lon,cc:r.cc,city:r.city,region:r.region,country:r.country,tz:r.tz||"",asn:r.asn,ips:[],conn:0,tent:0,ok:0,last:""};groups.set(k,g)}
+  g.ips.push(r);g.conn+=r.connexions;g.tent+=r.tentatives||0;g.ok+=r.reussies;if(r.last>g.last)g.last=r.last}
  const list=[...groups.values()].sort((a,b)=>b.conn-a.conn);
  const sig=list.map(g=>g.lat+g.lon+":"+g.conn+":"+g.ok+":"+g.ips.length).join("|")+Math.floor(Date.now()/6e4);
  const geoN=ips.filter(r=>r.lat!=null).length;
  $("#map-sub").textContent=nf.format(list.length)+" emplacement"+(list.length>1?"s":"")+" · "+nf.format(geoN)+" IP géolocalisée"+(geoN>1?"s":"");
  map.empty.textContent=last&&!last.geo?"Base de géolocalisation absente (voir README)":list.length?"":"Aucune IP géolocalisée pour l'instant";
- if(sig===map.sig)return;map.sig=sig;
- const max=Math.max(1,...list.map(g=>g.conn)),now=Date.now();
- map.dots.replaceChildren(...list.map(g=>{const p=svg("g",{class:"pt"+(g.ok?" ok":"")}),x=mx(g.lon),y=my(g.lat),r=3.5+10*Math.sqrt(g.conn/max);
-  if(now-new Date(g.last)<15*6e4)p.append(svg("circle",{class:"p",cx:x,cy:y,r}));
-  p.append(svg("circle",{class:"c",cx:x,cy:y,r}));
-  p.addEventListener("mousemove",ev=>mapTip(g,ev));
-  p.addEventListener("click",()=>{if(g.ips.length===1)return openIp(g.ips[0].ip);$("#ipfilter").value=g.city||countryOf(g);renderIps();
-   $("#iptable").closest(".card").scrollIntoView({behavior:"smooth",block:"start"})});
-  return p}))}
+ if(sig===map.sig)return;map.sig=sig;map.list=list;drawDots();renderMapSide()}
 
 /* ---------- Tableau des IP ---------- */
 const IPCOLS=[["pays","Origine",""],["ip","IP",""],["org","Réseau (AS)",""],["tags","Comportements",""],["connexions","Connexions","num"],["tentatives","Tentatives","num"],
@@ -237,6 +324,7 @@ function banButton(ip,isPrivate){if(isPrivate)return el("span");const b=banOf(ip
 function banBox(ip){const b=banOf(ip);if(!b)return null;const [cls,lbl]=BAN_STATUS[b.status]||BAN_STATUS.attente;
  const box=el("div","banbox"+(b.status==="actif"?"":" wait"));box.append(el("span",cls,lbl));
  box.append(el("span","",b.status==="actif"?"Bannie le "+fmtTime(b.ts)+", bloquée au pare-feu.":b.status==="refuse"?"Le pare-feu a refusé ce ban : "+b.detail:"Bannie le "+fmtTime(b.ts)+", en attente d'application par le service du VPS."));
+ if(b.auto)box.append(el("span","",b.reason+(b.expires?" · levé automatiquement le "+fmtTime(b.expires):" · définitif")+"."));
  return box}
 function renderBans(){if(!last)return;const B=last.bans||{list:[]},rows=B.list,t=$("#bantable"),w=$("#ban-warn");
  w.replaceChildren();
@@ -247,6 +335,7 @@ function renderBans(){if(!last)return;const B=last.bans||{list:[]},rows=B.list,t
  const tb=el("tbody");
  if(!rows.length){const tr=el("tr"),td=el("td");td.colSpan=5;td.append(emptyBox("Aucune IP bannie. Ouvre la fiche d'une IP et clique sur « Bannir l'IP »."));tr.append(td);tb.append(tr)}
  rows.forEach(b=>{const tr=el("tr"),ipc=el("td","ip");ipc.append(ipTag(b.ip,b.cc));ipc.onclick=()=>openIp(b.ip);
+  if(b.auto){const a=el("span","pill wait","Auto");a.title=b.reason+(b.expires?" · expire le "+fmtTime(b.expires):" · définitif");ipc.append(a)}
   const [cls,lbl]=BAN_STATUS[b.status]||BAN_STATUS.attente,st=el("td");st.append(el("span",cls,lbl));if(b.detail)st.title=b.detail;
   const ac=el("td");ac.style.textAlign="right";const x=el("button","btn");x.type="button";x.append(icon("x"),"Débannir");x.onclick=()=>setBan(b.ip,false,x);ac.append(x);
   tr.append(ipc,el("td","",b.country||(b.cc?regionName(b.cc):"—")),el("td","t",fmtTime(b.ts)),st,ac);tb.append(tr)});
@@ -288,7 +377,7 @@ function updateFeatures(f,sensors){const k=JSON.stringify([f,sensors]);if(k===fe
  const item=(label,on,txt)=>{const s=el("span","");s.append(label+" : ");s.append(el("b",on?"on":"",txt));return s};
  const al=f.alerts&&f.alerts.length;
  box.replaceChildren(item("Honeypots",true,sensors.join(", ")||"—"),item("Alertes",al,al?f.alerts.join(", "):"désactivées"),
-  item("VirusTotal",f.virustotal,f.virustotal?"actif (hash uniquement)":"désactivé"));
+  item("VirusTotal",f.virustotal,f.virustotal?"actif (hash uniquement)":"désactivé"),item("Ban auto",!!f.autoban,f.autoban||"désactivé"));
  if(al){const b=el("button","btn sm");b.type="button";b.append(icon("bell"),"Tester les alertes");
   b.onclick=async()=>{b.disabled=true;try{await banApi("POST","/api/alerts/test",{});toast("Alerte de test envoyée")}catch(e){toast("Échec : "+e.message)}finally{b.disabled=false}};box.append(b)}}
 
@@ -356,6 +445,7 @@ function renderIp(d){const box=$("#drawer"),st=box.scrollTop,w=el("div","dw");
  const cn=el("span","iptag");cn.append(flag(d.cc),countryOf(d)+(d.cc?" ("+d.cc.toUpperCase()+")":""));
  row("Pays",cn);row("Ville",d.city);row("Région",d.region);row("Continent",d.continent);
  row("ASN",d.asn?"AS"+d.asn:"");row("Organisation",d.org);
+ const lt=localTime(d.tz,d.lon);if(lt){row("Heure locale",lt.time+(lt.night?" (nuit)":""));row("Fuseau horaire",tzLabel(lt))}
  row("Coordonnées",d.lat!=null?d.lat.toFixed(3)+", "+d.lon.toFixed(3)+" (approx.)":"");
  row("Première vue",fmtTime(d.first)+" · "+ago(d.first));row("Dernière vue",fmtTime(d.last)+" · "+ago(d.last));
  row("Clients SSH",(d.clients||[]).map(c=>c.label).join(", "));row("Type",d.private?"Adresse privée / locale":"Adresse publique");

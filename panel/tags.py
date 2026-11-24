@@ -23,6 +23,8 @@ RULES = [
      r"\b(passwd|chpasswd|useradd|adduser|usermod|userdel)\b|/etc/shadow"),
     ("cleanup", "Effacement de traces",
      r"history\s+-c|unset\s+HISTFILE|HISTSIZE=0|rm\s+-rf?\s+(/var/log|~/\.bash_history)|\bshred\b"),
+    ("redis", "Attaque Redis",
+     r"^\s*(slaveof|replicaof|module\s+load|config\s+set\s+(dir|dbfilename)|flushall)\b"),
     ("recon", "Reconnaissance",
      r"\buname\b|/proc/cpuinfo|\bnproc\b|\blscpu\b|\bfree\b|/etc/os-release|\bwhoami\b|^\s*id\s*$|\bifconfig\b|\bip\s+a|\buptime\b|\bdf\b|/etc/passwd|\bw\s*$|\bps\s"),
 ]

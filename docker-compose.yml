@@ -12,8 +12,31 @@ services:
     environment:
       COWRIE_TELNET_ENABLED: "yes"
       COWRIE_OUTPUT_JSONLOG_ENABLED: "true"
+      # Signalement automatique des IP à AbuseIPDB (clé et activation dans .env)
+      COWRIE_OUTPUT_ABUSEIPDB_ENABLED: ${ABUSEIPDB_ENABLED:-false}
+      COWRIE_OUTPUT_ABUSEIPDB_API_KEY: ${ABUSEIPDB_API_KEY:-}
+      COWRIE_OUTPUT_ABUSEIPDB_TOLERANCE_ATTEMPTS: "1"   # signale dès la 1re tentative de login
+      COWRIE_OUTPUT_ABUSEIPDB_TOLERANCE_WINDOW: "120"
+      COWRIE_OUTPUT_ABUSEIPDB_REREPORT_AFTER: "24"      # une même IP au plus une fois par 24 h
+      COWRIE_OUTPUT_ABUSEIPDB_DUMP_PATH: var/lib/cowrie/abuseipdb
     volumes:
       - cowrie-var:/cowrie/cowrie-git/var
+
+  # Faux Redis ouvert sans mot de passe (honeypots/redis) : n'exécute rien, ne se connecte nulle part.
+  redis-hp:
+    build: ./honeypots/redis
+    container_name: redis-hp
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    pids_limit: 32
+    volumes:
+      - redis-log:/var/log/redis-hp
 
   panel:
     build: ./panel
@@ -39,6 +62,7 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - cowrie-var:/data:ro
+      - redis-log:/data-redis:ro
       # liste des IP bannies : écrite par le panel, appliquée par host/honeypot-bans.py
       - ./bans:/bans
       # base SQLite du panel (reconstruite automatiquement depuis les logs si supprimée)
@@ -46,4 +70,5 @@ services:
 
 volumes:
   cowrie-var:
+  redis-log:
   panel-state:

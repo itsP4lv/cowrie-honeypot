@@ -1,6 +1,6 @@
 # 🍯 Mon honeypot Cowrie
 
-J'ai pris un petit VPS (Debian 13) et j'ai installé dessus **[Cowrie](https://github.com/cowrie/cowrie)**, un honeypot SSH/Telnet. Le but : laisser les bots d'Internet croire qu'ils ont trouvé un serveur Linux mal protégé, et regarder ce qu'ils font une fois « dedans ».
+J'ai pris un petit VPS (Debian 13) et j'ai installé dessus **[Cowrie](https://github.com/cowrie/cowrie)**, un honeypot SSH/Telnet, puis un faux serveur **Redis** que j'ai codé moi-même. Le but : laisser les bots d'Internet croire qu'ils ont trouvé un serveur Linux mal protégé, et regarder ce qu'ils font une fois « dedans ».
 
 Lire les logs JSON de Cowrie à la main, c'est vite pénible, alors j'ai codé un **panel web** pour voir les attaques en direct : d'où elles viennent, quels mots de passe sont essayés, quelles commandes sont tapées, quels fichiers sont téléchargés.
 
@@ -33,8 +33,9 @@ Lire les logs JSON de Cowrie à la main, c'est vite pénible, alors j'ai codé u
 
 - **Cowrie** tourne dans un conteneur Docker et écoute sur les ports **22** et **23**, ceux que les bots scannent en permanence. Il simule un vrai système : faux shell, faux système de fichiers, et il accepte certains mots de passe pour que l'attaquant continue. Tout est enregistré, mais rien n'est réellement exécuté sur le VPS.
 - Mon **vrai SSH** a été déplacé sur un autre port, avec connexion par clé uniquement.
-- **UFW** bloque tout sauf mon port SSH et les ports 22/23 du honeypot.
-- Le **panel** lit les logs de Cowrie en lecture seule et n'écoute que sur `127.0.0.1` : pour le voir, j'ouvre un tunnel SSH depuis mon PC.
+- Un **faux Redis** (`honeypots/redis/`, Python sans dépendance) écoute sur le port **6379**, ouvert sans mot de passe comme les Redis mal configurés que les bots cherchent. Il répond aux commandes courantes et enregistre tout, mais n'exécute rien et ne se connecte nulle part (les `SLAVEOF`/`REPLICAOF` vers un serveur pirate sont juste notés).
+- **UFW** bloque tout sauf mon port SSH et les ports 22/23/6379 des honeypots.
+- Le **panel** lit les logs de Cowrie et du faux Redis en lecture seule et n'écoute que sur `127.0.0.1` : pour le voir, j'ouvre un tunnel SSH depuis mon PC.
 
 ## Le panel
 
@@ -47,11 +48,13 @@ En ouvrant le panel, on arrive sur une **page d'accueil** qui propose deux espac
 |---|---|
 | ![Thème sombre](screenshots/panel-dark.png) | ![Thème clair](screenshots/panel-light.png) |
 
+Il y a aussi deux autres thèmes, « Ptérodactyl » et « Terminal » (vert sur noir).
+
 Ce qu'il affiche, avec une actualisation toutes les 5 secondes :
 
 **Les chiffres clés** : connexions, IP uniques, pays, tentatives de login, logins réussis, commandes tapées, fichiers capturés. Un badge `+N` apparaît quand il y a du nouveau.
 
-**La carte des connexions** : un point par lieu, plus gros quand il y a plus de connexions, rouge quand un bot a réussi à se connecter. Le point pulse si l'IP a été active dans le dernier quart d'heure. À côté, le classement des pays avec leurs drapeaux.
+**La carte des connexions** : un point par lieu, plus gros quand il y a plus de connexions, rouge quand un bot a réussi à se connecter. Le point pulse si l'IP a été active dans le dernier quart d'heure. La zone où il fait nuit est assombrie. En plein écran, on peut zoomer, afficher les fuseaux horaires et voir l'heure locale de chaque attaquant. À côté, le classement des pays avec leurs drapeaux.
 
 ![Carte des connexions et pays](screenshots/map.png)
 
@@ -69,11 +72,15 @@ Ce qu'il affiche, avec une actualisation toutes les 5 secondes :
 
 **Bannir une IP** : dans la fiche d'une IP, le bouton « Bannir l'IP » la bloque au pare-feu du VPS (honeypot **et** vrai SSH). Les IP bannies sont listées dans une section dédiée, avec leur statut (bloquée, en attente, refusée) et un bouton pour les débannir.
 
+**Ban automatique** : une IP qui envoie plus de 30 commandes en 60 secondes (toutes sessions confondues) est bannie automatiquement pour 24 h, avec une alerte Discord/Telegram si elles sont configurées. Elle apparaît dans la liste avec un badge « Auto ». Les bans manuels n'expirent jamais. Les seuils se règlent dans `.env`.
+
+**Signalement à AbuseIPDB** (optionnel) : le plugin AbuseIPDB de Cowrie signale chaque IP qui tente de se connecter, au plus une fois par 24 h. La clé se met dans `.env` (`ABUSEIPDB_API_KEY`, avec `ABUSEIPDB_ENABLED=true`). Au départ, je l'avais réglé sur 10 tentatives avant de signaler, mais la plupart des bots n'essaient que 1 ou 2 mots de passe : presque rien n'était envoyé.
+
 **Rejouer une session** : Cowrie enregistre tout l'écran de chaque session. Le bouton « Rejouer » de la fiche la repasse comme une vidéo (vitesse ×1 à ×20). Ici, le bot de détection de honeypot dont je parle plus bas, en train de tester le faux shell :
 
 ![Relecture d'une session](screenshots/replay.png)
 
-**Comportements et heures d'activité** : chaque session est classée automatiquement selon les commandes tapées (reconnaissance, téléchargement de payload, mineur de crypto, botnet, persistance, effacement de traces, détection de honeypot…). Une carte de chaleur montre à quelles heures les bots attaquent.
+**Comportements et heures d'activité** : chaque session est classée automatiquement selon les commandes tapées (reconnaissance, téléchargement de payload, mineur de crypto, botnet, persistance, effacement de traces, détection de honeypot, attaque Redis…). Une carte de chaleur montre à quelles heures les bots attaquent.
 
 ![Comportements et heures d'activité](screenshots/behaviours.png)
 
@@ -87,7 +94,7 @@ Ce qu'il affiche, avec une actualisation toutes les 5 secondes :
 ### Côté technique
 - **Python + Flask** côté serveur, page en HTML/CSS/JS sans framework (`panel/static/`). Les graphiques, la carte et le lecteur de sessions sont faits à la main.
 - **SQLite** : un thread lit les nouvelles lignes des logs au fil de l'eau (`panel/store.py`) au lieu de tout relire toutes les 5 s. Chaque événement est étiqueté avec le honeypot qui l'a produit, pour pouvoir en ajouter d'autres (voir [docs/ajouter-un-honeypot.md](docs/ajouter-un-honeypot.md)).
-- Modules : `geoip.py` (géoloc), `tags.py` (règles de classement), `alerts.py` (Discord/Telegram), `vt.py` (VirusTotal), `tty.py` (lecture des enregistrements de Cowrie).
+- Modules : `geoip.py` (géoloc), `tags.py` (règles de classement), `alerts.py` (Discord/Telegram), `vt.py` (VirusTotal), `tty.py` (lecture des enregistrements de Cowrie), `autoban.py` (ban automatique).
 - La **géolocalisation est hors ligne**. Au build de l'image, `panel/fetch_assets.py` télécharge la base gratuite [DB-IP Lite](https://db-ip.com/db/lite.php), le fond de carte Natural Earth et les drapeaux [flag-icons](https://github.com/lipis/flag-icons). Aucune IP n'est envoyée à une API externe.
 - Routes d'API :
   - `GET /api/stats` : toutes les données du tableau de bord ;
@@ -105,6 +112,10 @@ Les secrets vont dans un fichier `.env`, jamais commité. Pour le créer : `cp .
 | `ALERT_TELEGRAM_TOKEN` / `ALERT_TELEGRAM_CHAT` | bot Telegram et id du chat |
 | `ALERT_EVENTS` | `login,file,country` par défaut |
 | `VT_API_KEY` | clé VirusTotal (gratuite) |
+| `AUTOBAN_ENABLED` | ban automatique des IP qui spamment les commandes (`true` par défaut) |
+| `AUTOBAN_COMMANDS` / `AUTOBAN_WINDOW` | seuil : plus de 30 commandes en 60 s par défaut |
+| `AUTOBAN_HOURS` | durée du ban automatique, 24 h par défaut (`0` = définitif) |
+| `ABUSEIPDB_ENABLED` / `ABUSEIPDB_API_KEY` | signalement des IP à AbuseIPDB (relancer avec `docker compose up -d cowrie`) |
 
 Les alertes contiennent des textes écrits par les attaquants : ils sont nettoyés (caractères de contrôle, longueur), les mentions Discord sont désactivées (pas de `@everyone` déclenché par un bot), et il y a un anti-spam (une même alerte au plus toutes les 30 min, 30 par heure maximum).
 
@@ -136,7 +147,7 @@ systemctl restart ssh         # puis teste une nouvelle connexion avant de ferme
 ```bash
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow 22/tcp && ufw allow 23/tcp
+ufw allow 22/tcp && ufw allow 23/tcp && ufw allow 6379/tcp
 ufw enable
 ```
 > Docker publie ses ports **sans passer par UFW**. C'est pour ça que le panel est lié à `127.0.0.1:8080` et non à `8080` : même avec UFW mal réglé, il reste inaccessible depuis Internet.
@@ -174,6 +185,7 @@ docker compose build --build-arg GEO_MONTH=$(date +%Y-%m) panel && docker compos
 
 - Le panel n'est jamais exposé à Internet : il écoute sur `127.0.0.1`, et on y accède par tunnel SSH.
 - Cowrie tourne dans un conteneur avec un faux système : un bot « connecté » n'a pas accès au vrai VPS.
+- Le faux Redis tourne dans un conteneur durci (non-root, lecture seule, aucune capacité Linux, 128 Mo de RAM) et n'utilise que la bibliothèque standard de Python.
 - Le panel lit les logs en lecture seule (`/data:ro`).
 - Le conteneur du panel est durci : utilisateur non-root, système de fichiers en lecture seule, aucune capacité Linux, `no-new-privileges`, mémoire et nombre de processus limités. Il tourne sous gunicorn, pas avec le serveur de développement de Flask.
 - En-têtes HTTP : CSP stricte (aucun script externe ni inline), `X-Frame-Options`, `nosniff`, `no-referrer`. Toutes les requêtes dont l'en-tête Host n'est pas local sont refusées (protection contre le DNS rebinding à travers le tunnel).

@@ -62,8 +62,24 @@ def parse_cowrie(e):
     return None  # événements sans intérêt pour le panel (kex, taille du terminal…)
 
 
+def parse_redis(e):
+    """Faux Redis (honeypots/redis) : mêmes types d'événements que Cowrie."""
+    eid = e.get("eventid", "")
+    base = {"ts": e.get("timestamp", ""), "ip": e.get("src_ip"), "session": e.get("session")}
+    if eid == "redis.connect":
+        return {**base, "kind": "connect", "protocol": "redis", "dst_port": e.get("dst_port")}
+    if eid == "redis.command":
+        return {**base, "kind": "command", "input": e.get("input")}
+    if eid == "redis.closed":
+        return {**base, "kind": "closed", "duration": e.get("duration")}
+    return None
+
+
+REDIS_DATA = os.environ.get("REDIS_DATA", "/data-redis")
+
 SOURCES = [
     {"sensor": "cowrie", "glob": os.path.join(DATA, "log", "cowrie", "cowrie.json*"), "parse": parse_cowrie},
+    {"sensor": "redis", "glob": os.path.join(REDIS_DATA, "redis.json*"), "parse": parse_redis},
     # Demain : {"sensor": "dionaea", "glob": "/data-dionaea/…", "parse": parse_dionaea},
 ]
 

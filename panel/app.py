@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 from flask import Flask, abort, g, jsonify, request, send_from_directory
 
 import alerts
+import autoban
 import geoip
 import status
 import store
@@ -142,6 +143,7 @@ def bans_view():
         else:
             st, detail = "attente", ""
         rows.append({"ip": ip, "ts": info.get("ts", ""), "reason": info.get("reason", ""),
+                     "auto": bool(info.get("auto")), "expires": info.get("expires", ""),
                      "cc": gi["cc"], "country": gi["country"], "status": st, "detail": detail})
     rows.sort(key=lambda r: r["ts"], reverse=True)
     return {"list": rows, "helper_ts": helper_ts, "helper_error": applied.get("error", ""),
@@ -169,6 +171,45 @@ def ban_ip():
         bans[ip] = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "reason": reason}
         _write_banlist(bans)
     return jsonify(bans_view())
+
+
+def auto_ban(ip, reason, hours):
+    """Appelé par autoban.py. Ne touche pas une IP déjà bannie (manuellement ou non)."""
+    now = datetime.now(timezone.utc)
+    entry = {"ts": now.isoformat(timespec="seconds"), "reason": reason[:200], "auto": True}
+    if hours:
+        entry["expires"] = (now + timedelta(hours=hours)).isoformat(timespec="seconds")
+    with _ban_lock:
+        bans = _read_json(BANLIST, {})
+        if ip in bans:
+            return False
+        bans[ip] = entry
+        _write_banlist(bans)
+    print(f"autoban : {ip} ({reason})", flush=True)
+    return True
+
+
+def _expire_bans():
+    """Retire les bans automatiques arrivés à expiration (les bans manuels restent)."""
+    while True:
+        time.sleep(60)
+        try:
+            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            with _ban_lock:
+                bans = _read_json(BANLIST, {})
+                old = [ip for ip, b in bans.items() if b.get("expires") and b["expires"] <= now]
+                if old:
+                    for ip in old:
+                        del bans[ip]
+                    _write_banlist(bans)
+                    print("autoban : expiré", ", ".join(old), flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print("autoban :", exc, flush=True)
+
+
+def _notify_ban(text):
+    if alerts.CHANNELS and alerts._allow(("autoban", text)):
+        alerts.queue_text(text)
 
 
 @app.delete("/api/bans/<path:ip>")
@@ -264,7 +305,7 @@ def compute_stats(con):
         "totals": totals,
         "geo": geoip.ENABLED,
         "sensors": [r[0] for r in con.execute("SELECT DISTINCT sensor FROM events")],
-        "features": {"alerts": alerts.CHANNELS, "virustotal": vt.ENABLED},
+        "features": {"alerts": alerts.CHANNELS, "virustotal": vt.ENABLED, "autoban": autoban.describe()},
         "top_ips": top_ips,
         "top_countries": sorted(countries.values(), key=lambda c: (-c["ips"], -c["connexions"]))[:10],
         "top_tags": top_tags,
@@ -442,7 +483,12 @@ def land():
 
 
 # ---------- Tâches de fond ----------
-INGESTER = store.Ingester(on_event=alerts.on_event)
+def on_live_event(ev):
+    alerts.on_event(ev)
+    autoban.on_event(ev)
+
+
+INGESTER = store.Ingester(on_event=on_live_event)
 
 
 def _seed_alerts():
@@ -454,8 +500,10 @@ def _seed_alerts():
 
 
 def start_background():
+    autoban.setup(auto_ban, _notify_ban)
     INGESTER.start()
     alerts.start()
+    threading.Thread(target=_expire_bans, daemon=True, name="autoban").start()
     threading.Thread(target=_seed_alerts, daemon=True, name="seed").start()
     vt.start(INGESTER.ready)
     status.start()
